@@ -10,7 +10,6 @@
 
 #include "types.h"
 #include "io.h"
-#include "config.h"
 
 #ifdef	__cplusplus
 extern "C" {

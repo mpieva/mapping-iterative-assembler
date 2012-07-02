@@ -11,9 +11,7 @@
 #include "params.h"
 #include <stdlib.h>
 #include <ctype.h>
-
-
-#define save_malloc malloc
+#include "config.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -47,7 +45,6 @@ typedef struct pw_aln_frag {
   int trimmed;
   int score;
   char segment; // f=front, a=all, b=back, n=not applicable
-  int num_inputs; // for collapsed sequences, the number of input seqs
   int offset; // for segment='b', number of bases not shown that
               // were in the front fragment
 } PWAlnFrag;
@@ -61,9 +58,9 @@ typedef struct pw_aln_frag* PWAlnFragP;
 typedef struct alnseq {
   char id[MAX_ID_LEN + 1]; // the ID of the sequence
   char desc[MAX_DESC_LEN + 1]; // the description of the sequence
-  char seq[ (2*INIT_ALN_SEQ_LEN) + 1];  // the sequence string
-  char smp[ (2*INIT_ALN_SEQ_LEN) + 1];  // code for substitution matrix depth
-  char* ins[ (2*INIT_ALN_SEQ_LEN) + 1]; // array of pointers to char
+  char seq[ INIT_ALN_SEQ_LEN + 1];  // the sequence string
+  char smp[ INIT_ALN_SEQ_LEN + 1];  // code for substitution matrix depth
+  char* ins[INIT_ALN_SEQ_LEN + 1]; // array of pointers to char
   // that will be filled with sequence
   int start;  // where this sequence starts relative to the reference (0-indexed)
   int end;    // where this sequence ends relative to the reference (0-indexed)
@@ -71,7 +68,6 @@ typedef struct alnseq {
               // reverse complemented
   int trimmed; // boolean to denote that this sequence has been trimmed
   int score;  // the alignment score for this guy
-  int num_inputs; // the number of input seqs if this is a collapsed seq
   char segment; // f=front, a=all, b=back, n=not applicable
 } AlnSeq;
 // pointer to struct aln_seq
@@ -97,28 +93,14 @@ typedef struct refseq {
 // pointer to struct refseq
 typedef struct refseq* RefSeqP;
 
-/* Define qsumseq */
-typedef struct qsumseq {
-  unsigned int Aqualsum[INIT_ALN_SEQ_LEN+1];
-  unsigned int Cqualsum[INIT_ALN_SEQ_LEN+1];
-  unsigned int Gqualsum[INIT_ALN_SEQ_LEN+1];
-  unsigned int Tqualsum[INIT_ALN_SEQ_LEN+1];
-} QSumSeq;
-typedef struct qsumseq* QSSP;
-
 /* Define FragSeq and FragSeqP to hold a simple sequence */
 typedef struct fragseq {
   char id[MAX_ID_LEN + 1];
   char desc[MAX_DESC_LEN + 1];
   char seq[INIT_ALN_SEQ_LEN+1];
-  char qual[INIT_ALN_SEQ_LEN+1];
-  QSSP qss; // pointer to a QSumSeq struct that may be needed for collapsing
-  int qual_sum;
   int trim_point; // 0-indexed position of last base before adapter
   int trimmed; // Boolean, TRUE means sequence should be trimmed to trim_point
   int seq_len;
-  int strand_known;  // Boolean, TRUE means the alignment strand of this
-  // sequence has been learned by virtue of a positive scoring alignment
   int rc; // Boolean, TRUE means this is the reverse complement
   int as; // 0-indexed start point of alignment on current ref
   int ae; // 0-indexed end point of alignment on current ref
@@ -128,7 +110,6 @@ typedef struct fragseq {
   //                   (if applicable, otherwise NULL)
   int unique_best;   // boolean; TRUE means unique & best score
   //                    for repeat filtering
-  int num_inputs; // number of sequences collapsed into this one
 } FragSeq;
 typedef struct fragseq* FragSeqP;
 
@@ -180,7 +161,7 @@ typedef struct dpm {
 typedef struct dpm* DPMP;
 
 
-typedef struct map_alignment {
+    typedef struct map_alignment {
   RefSeqP ref;       // The reference sequence to which everything is mapped
   PSSMP fpsm;        // The PSSMP set of + strand matrices for aligning and consensus
   PSSMP rpsm;        // The PSSMP set of - strand matrices for aligning and consensus
@@ -206,8 +187,6 @@ typedef struct base_counts {
   int scoreT;
   int gaps;
   int cov;
-  double frac_agree; // fraction of bases that agree with the most
-                     // common base
 } BaseCounts;
 typedef struct base_counts* BaseCountsP;
 

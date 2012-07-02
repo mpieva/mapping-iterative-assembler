@@ -16,8 +16,8 @@
    of type size_t and is appropriate as an array index
 */
 int kmer2inx( const char* kmer,
-	      const unsigned int kmer_len,
-	      size_t* inx ) {
+		     const unsigned int kmer_len,
+		     size_t* inx ) {
   size_t l_inx = 0;
   int i = 0;
   char curr_char;
@@ -130,23 +130,6 @@ void grow_kmers ( KmersP k ) {
   k->kmers = new_kmers;
   k->size = new_size;
 }
-
-/* all_upper
-   Args: (1) Pointer to char array (seq)
-         (2) int number of characters to check (len)
-   Returns: int 1 => first len charaters in seq are all upper case
-                0 => at least one of the characters is not upper case
-*/
-inline int all_upper( const char* seq, const int kmer_len ) {
-  size_t i;
-  for( i = 0; i < kmer_len; i++ ) {
-    if ( islower( seq[i] ) ) {
-      return 0;
-    }
-  }
-  return 1;
-}
-
 
 /* populate_kpa
  */

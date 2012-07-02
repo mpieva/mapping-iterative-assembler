@@ -81,11 +81,11 @@ MapAlignmentP init_map_alignment(void) {
  Returns nothing
  */
 void free_map_alignment(MapAlignmentP maln) {
-    int i ;
-
     /* First, free the maln->ref components */
     free(maln->ref->seq);
-    free(maln->ref->rcseq);
+    if (maln->ref->rcseq != NULL) {
+        free(maln->ref->rcseq);
+    }
     free(maln->ref->gaps);
     free(maln->ref);
 
@@ -104,7 +104,8 @@ void show_consensus(MapAlignmentP maln, int out_format) {
     char* consensus;
     char* aln_ref;
     char* ins_cons;
-    int j, cons_pos, ref_pos, ref_gaps;
+    char cons_id[MAX_ID_LEN + 1];
+    int i, j, cons_pos, ref_pos, ref_gaps;
     int* cov;
     int* ins_cov;
     int* ref_poss;
@@ -201,6 +202,7 @@ void show_consensus(MapAlignmentP maln, int out_format) {
             ; /* Do nothing, this one is checked along the way */
             break;
         case 5:
+            //		sprintf(cons_id, "%s-assembled", maln->ref->id);
             fasta_print_cons(consensus, maln->ref->id);
             break;
     }
@@ -226,8 +228,11 @@ char* get_consensus(MapAlignmentP maln) {
     int len_consensus = get_consensus_length(maln);
     char* consensus = (char*) save_malloc((len_consensus + 1) * sizeof (char));
     char* ins_cons = (char*) save_malloc(MAX_INS_LEN * sizeof (char));
-    int j, cons_pos, ref_pos, ref_gaps;    
-    int* ins_cov = (int*) save_malloc(MAX_INS_LEN * sizeof (int));    
+    char cons_id[MAX_ID_LEN + 1];
+    int i, j, cons_pos, ref_pos, ref_gaps;
+    int* cov;
+    int* ins_cov = (int*) save_malloc(MAX_INS_LEN * sizeof (int));
+    int* ref_poss;
     AlnSeqP aln_seq;
     BaseCountsP bcs;
     PSSMP psm;
@@ -277,8 +282,8 @@ char* get_consensus(MapAlignmentP maln) {
  to a file
  */
 int write_ma(char* fn, MapAlignmentP maln) {
-    int i, j, row;
-    //    char* at;
+    int i, j, row, col;
+    char* at;
     time_t t;
     int aln_seq_len;
     FILE* MAF;
@@ -287,13 +292,11 @@ int write_ma(char* fn, MapAlignmentP maln) {
 
     MAF = fileOpen(fn, "w");
 
+    at = (char*) save_malloc(64 * sizeof (char));
     t = time(NULL);
-    //at = (char*) save_malloc(64 * sizeof (char));
-
-    //at = asctime(localtime(&t));
+    at = asctime(localtime(&t));
     /* First, write a nice header */
-    fprintf(MAF, "/* map_alignment [V%s] */ %s",PACKAGE_VERSION , 
-	    asctime(localtime(&t)) );
+    fprintf(MAF, "/* map_alignment */%s", at);
 
     /* Write MapAlignment Info */
     fprintf(MAF, "MALN_NAS %d\n", maln->num_aln_seqs);
@@ -325,44 +328,40 @@ int write_ma(char* fn, MapAlignmentP maln) {
     fprintf(MAF, "DEPTH %d\n", fpsm->depth);
     fprintf(MAF, "FPSM:\n");
     for (i = 0; i <= (fpsm->depth * 2); i++) {
-      for (row = 0; row <= 4; row++) {
-	fprintf(MAF, "%d %d %d %d %d\n", 
-		fpsm->sm[i][row][0],
-		fpsm->sm[i][row][1], 
-		fpsm->sm[i][row][2],
-		fpsm->sm[i][row][3], 
-		fpsm->sm[i][row][4]);
-      }
-      fprintf(MAF, "\n");
+        for (row = 0; row <= 4; row++) {
+            fprintf(MAF, "%d %d %d %d %d\n", fpsm->sm[i][row][0],
+                    fpsm->sm[i][row][1], fpsm->sm[i][row][2],
+                    fpsm->sm[i][row][3], fpsm->sm[i][row][4]);
+        }
+        fprintf(MAF, "\n");
     }
-    
+
     fprintf(MAF, "RPSM:\n");
     for (i = 0; i <= (fpsm->depth * 2); i++) {
-      for (row = 0; row <= 4; row++) {
-	fprintf(MAF, "%d %d %d %d %d\n", rpsm->sm[i][row][0],
-		rpsm->sm[i][row][1], rpsm->sm[i][row][2],
-		rpsm->sm[i][row][3], rpsm->sm[i][row][4]);
-      }
-      fprintf(MAF, "\n");
+        for (row = 0; row <= 4; row++) {
+            fprintf(MAF, "%d %d %d %d %d\n", rpsm->sm[i][row][0],
+                    rpsm->sm[i][row][1], rpsm->sm[i][row][2],
+                    rpsm->sm[i][row][3], rpsm->sm[i][row][4]);
+        }
+        fprintf(MAF, "\n");
     }
 
     /* Write all the aligned fragments */
     fprintf(MAF, "__ALNSEQS__\n");
     for (i = 0; i < maln->num_aln_seqs; i++) {
-      as = maln->AlnSeqArray[i];
-      aln_seq_len = strlen(as->seq);
-      fprintf(MAF, "ID %s\n", as->id);
-      fprintf(MAF, "DESC %s\n", as->desc);
-      fprintf(MAF, "SCORE %d\n", as->score);
-      fprintf(MAF, "NUM_INPUTS %d\n", as->num_inputs);
-      fprintf(MAF, "START %d\n", as->start);
-      fprintf(MAF, "END %d\n", as->end);
-      fprintf(MAF, "RC %d\n", as->revcom);
-      fprintf(MAF, "TR %d\n", as->trimmed);
-      fprintf(MAF, "SEG %c\n", as->segment);
-      fprintf(MAF, "SEQ %s\n", as->seq);
-      fprintf(MAF, "SMP %s\n", as->smp);
-      fprintf(MAF, "INS_POS");
+        as = maln->AlnSeqArray[i];
+        aln_seq_len = strlen(as->seq);
+        fprintf(MAF, "ID %s\n", as->id);
+        fprintf(MAF, "DESC %s\n", as->desc);
+        fprintf(MAF, "SCORE %d\n", as->score);
+        fprintf(MAF, "START %d\n", as->start);
+        fprintf(MAF, "END %d\n", as->end);
+        fprintf(MAF, "RC %d\n", as->revcom);
+        fprintf(MAF, "TR %d\n", as->trimmed);
+        fprintf(MAF, "SEG %c\n", as->segment);
+        fprintf(MAF, "SEQ %s\n", as->seq);
+        fprintf(MAF, "SMP %s\n", as->smp);
+        fprintf(MAF, "INS_POS");
         for (j = 0; j < aln_seq_len; j++) {
             if (as->ins[j] == NULL) {
                 //	fprintf( MAF, " _" );
@@ -549,16 +548,8 @@ MapAlignmentP read_ma(const char* fn) {
         fgets(line, MAX_LINE_LEN, MAF);
         sscanf(line, "SCORE %d\n", &as->score);
 
-	/* Get NUM_INPUTS line, if there */
-	fgets(line, MAX_LINE_LEN, MAF);
-	if ( sscanf( line, "NUM_INPUTS %d\n", &as->num_inputs ) == 1 ) {
-	  fgets(line, MAX_LINE_LEN, MAF);
-	}
-	else {
-	  as->num_inputs = 1;
-	}
-
         /* Get START line */
+        fgets(line, MAX_LINE_LEN, MAF);
         sscanf(line, "START %d\n", &as->start);
 
         /* Get END line */

@@ -8,7 +8,6 @@
 #include <getopt.h>
 #include <time.h>
 #include <limits.h>
-#include <float.h>
 #include <stdio.h>
 #include "params.h"
 #include "types.h"

@@ -1,6 +1,7 @@
 #include "fsdb.h"
 
 
+
 /* fs_comp
    Args: (1) pointer to first FragSeqP
          (2) pointer to second FragSeqP
@@ -87,92 +88,6 @@ int fs_comp ( const void* fs1_,
   }
 }
 
-/* fs_comp_qscore
-   Args: (1) pointer to first FragSeqP
-         (2) pointer to second FragSeqP
-   Returns: 1 if the first FragSeq comes before the second one,
-           -1 if it comes after and
-	   0 if they come at the same time
-   This function defined a sort order for FragSeqP's. This order
-   is useful for then determining which FragSeqP's are unique.
-*/
-int fs_comp_qscore ( const void* fs1_,
-		     const void* fs2_ ) {
-  FragSeqP* fs1p = (FragSeqP*) fs1_;
-  FragSeqP* fs2p = (FragSeqP*) fs2_;
-  FragSeqP fs1 = *fs1p;
-  FragSeqP fs2 = *fs2p;
-
-  /* First sort criteria is strand (rc) */
-  if ( fs1->rc && !(fs2->rc) ) {
-    return -1;
-  }
-  if ( !(fs1->rc) && fs2->rc ) {
-    return 1;
-  }
-
-  /* Forward strand guys */
-  if ( fs1->rc == 0 ) {
-    /* Second sort criteria is where they start,
-       lower coordinates come first */
-    if ( fs1->as < fs2->as ) {
-      return -1;
-    }
-    if ( fs1->as > fs2->as ) {
-      return 1;
-    }
-    /* Third sort criteria is where they end,
-       lower coordinates come later */
-    if ( fs1->ae < fs2->ae ) {
-      return 1;
-    }
-    if ( fs1->ae > fs2->ae ) {
-      return -1;
-    }
-    /* Fourth sort criteria is the sum of quality scores
-       in fs->qual_sum, lower score comes later */
-    if ( fs1->qual_sum < fs2->qual_sum ) {
-      return 1;
-    }
-    if ( fs1->qual_sum > fs2->qual_sum ) {
-      return -1;
-    }
-
-    /* If they match on all that, they are the same */
-    return 0;
-  }
-
-  /* Reverse strand guys */
-  else {
-    /* Sort by end (start of molecule, higher coordinates first */
-    if ( fs1->ae < fs2->ae ) {
-      return 1;
-    }
-    if ( fs1->ae > fs2->ae ) {
-      return -1;
-    }
-
-    /* Sort by start (end of molecule, higher coordinates later */
-    if ( fs1->as < fs2->as ) {
-      return -1;
-    }
-    if ( fs1->as > fs2->as ) {
-      return 1;
-    }
-    /* Fourth sort criteria is the sum of quality scores
-       in fs->qual_sum, lower score comes later */
-    if ( fs1->qual_sum < fs2->qual_sum ) {
-      return 1;
-    }
-    if ( fs1->qual_sum > fs2->qual_sum ) {
-      return -1;
-    }
-
-    /* If all that matches, they are sorted the same */
-    return 0;
-  }
-}
-
 
 
 /* add_virgin_fs2fsdb
@@ -181,47 +96,37 @@ int fs_comp_qscore ( const void* fs1_,
    Returns: 1 if success; 0 if failue (not enough memories)
    This function is only called from sg_align; the argument
    FragSeqP points to a FragSeq for which the following is
-   true: id, desc, as, ae, score, front_asp, back_asp,
-   unique, and num_inputs are set to correct values.
+   true: id, desc, as, ae, score, front_asp, back_asp and
+   unique are set to correct values.
    If trimmed is true, then this sequence is to be trimmed
    to the trim_point
    If rc is set, then this sequence is to be reverse
    complemented
    Once these operations are done, this "non-virgin" FragSeq
-   is then copied into the next slot of fsdb, growing fsdb
+   is then copied into the next slow of fsdb, growing fsdb
    if necessary, and incrementing its fsdb->num_fss
 */
 int add_virgin_fs2fsdb( FragSeqP fs, FSDB fsdb ) {
   int i, len, half_len;
-  char tmp_b, tmp_q;
+  char tmp_b;
 
   /* Trim it? */
   if ( fs->trimmed ) {
     fs->seq[fs->trim_point + 1] = '\0';
-    fs->qual[fs->trim_point + 1] = '\0';
     fs->seq_len = fs->trim_point + 1;
   }
 
-  
-  /* revcom it if it's a revcom alignment and
-     we know the strand
-  */
-  if ( fs->rc &&
-       fs->strand_known ) {
+  /* revcom it? */
+  if ( fs->rc ) {
     len = fs->seq_len;
     half_len = len / 2;
     for ( i = 0; i < half_len; i++ ) {
       tmp_b = fs->seq[i];
-      tmp_q = fs->qual[i];
       fs->seq[i] = revcom_char(fs->seq[len-(i+1)]);
       fs->seq[len-(i+1)] = revcom_char(tmp_b);
-      fs->qual[i] = fs->qual[len-(i+1)];
-      fs->qual[len-(i+1)] = tmp_q;
     }
     if ( len%2 == 1 ) {
-      /* Sequence length was odd, revcom the middle base;
-	 No need to adjust the quality score
-       */
+      /* Sequence length was odd, revcom the middle base */
       fs->seq[half_len] = revcom_char(fs->seq[half_len]);
     }
   }
@@ -240,16 +145,6 @@ int add_virgin_fs2fsdb( FragSeqP fs, FSDB fsdb ) {
 void sort_fsdb( FSDB fsdb ) {
   qsort( (void*)fsdb->fss, (size_t)fsdb->num_fss,
 	 sizeof(FragSeqP), fs_comp );
-}
-
-/* Sorts the fsdb->fss on rc, as, ae, qual_sum
-   After sorting all 1 strand alignments are first
-   These are sorted by as, then ae, with the highest
-   scoring guys first
-*/
-void sort_fsdb_qscore( FSDB fsdb ) {
-  qsort( (void*)fsdb->fss, (size_t)fsdb->num_fss,
-	 sizeof(FragSeqP), fs_comp_qscore );
 }
 
 
@@ -275,29 +170,15 @@ void find_fsdb_score_cut( FSDB fsdb, double* slope, double* intercept ) {
      repeated twice (three times in debug mode), the single pass
      algorithm would be numerically unstable.)
   */
-  double slope_bf = 0, intercept_bf = 0; 
-  //  double slope_max = 0, intercept_max = 0;
-  double slope_delta, max_slope_delta;
-  int max_sc_len[INIT_ALN_SEQ_LEN+1]; // place to put maximum 
-  // scores at each length
   size_t j = 0, i ;
-  FILE* LVSLOG;
-  /* Initialization */
-  double xbar = 0, ybar = 0 ;
-  for ( i = 0; i < (INIT_ALN_SEQ_LEN+1); i++ ) {
-    max_sc_len[i] = 0;
-  }
 
+  double xbar = 0, ybar = 0 ;
   for ( i = 0; i < fsdb->num_fss; i++ ) {
     if ( fsdb->fss[i]->unique_best &&
 	(fsdb->fss[i]->score >= FIRST_ROUND_SCORE_CUTOFF) ) {
       xbar += fsdb->fss[i]->seq_len;
       ybar += fsdb->fss[i]->score;
       j++;
-      /* Is this the best score for this length? */
-      if ( fsdb->fss[i]->score > max_sc_len[fsdb->fss[i]->seq_len] ) {
-        max_sc_len[fsdb->fss[i]->seq_len] = fsdb->fss[i]->score;
-      }
     }
   }
   xbar /= j ;
@@ -311,62 +192,11 @@ void find_fsdb_score_cut( FSDB fsdb, double* slope, double* intercept ) {
       ssxx += (fsdb->fss[i]->seq_len - xbar) * (fsdb->fss[i]->seq_len - xbar) ;
     }
   }
-  slope_bf     = ssxy / ssxx ;
-  intercept_bf = ybar - slope_bf * xbar ;
-
-
-  /* Now find the slope_max and intercept_max */
-  /*  xbar = 0;
-  ybar = 0;
-  j = 0;
-  for ( i = 0; i < (INIT_ALN_SEQ_LEN+1); i++ ) {
-    if ( max_sc_len[i] > 0 ) {
-      xbar += i;
-      ybar += max_sc_len[i];
-      j++;
-    }
-  }
-  xbar /= j;
-  ybar /= j;
-  
-  ssxy = 0;
-  ssxx = 0;
-  for ( i = 0; i < (INIT_ALN_SEQ_LEN+1); i++ ) {
-    if ( max_sc_len[i] > 0 ) {
-      ssxy += (i - xbar) * (max_sc_len[i] - ybar);
-      ssxx += (i - xbar) * (i - xbar);
-    }
-  }
-  slope_max = (ssxy / ssxx);
-  intercept_max = ybar - slope_max * xbar;
-  */
-
-  max_slope_delta = 0;
-  for ( i = 0; i < fsdb->num_fss; i++ ) {
-    if ( fsdb->fss[i]->unique_best &&
-	 (fsdb->fss[i]->score >= FIRST_ROUND_SCORE_CUTOFF) ) {
-      slope_delta = ( fsdb->fss[i]->score - 
-		      ((slope_bf * fsdb->fss[i]->seq_len) + 
-		       intercept_bf) ) 
-	/ 
-	fsdb->fss[i]->seq_len;
-      if ( slope_delta > max_slope_delta ) {
-	max_slope_delta = slope_delta;
-      }
-    }
-  }
-
-  *intercept = intercept_bf;
-  /* Make sure slope is sane (positive) */
-  if ( (slope_bf - max_slope_delta) > 0 ) {
-    *slope     = slope_bf - (max_slope_delta * 2.0);
-  }
-  else {
-    *slope = (double)(slope_bf * (SCORE_CUTOFF_BUFFER/100.0));
-  }
+  *slope = ssxy / ssxx ;
+  *intercept = ybar - *slope * xbar ;
 
   if (DEBUG) {
-    LVSLOG = fileOpen( "LENvSCORE.dat", "w" );
+    FILE* LVSLOG = fileOpen( "LENvSCORE.dat", "w" );
     fprintf( LVSLOG,
 	"# Just calculated length-score best-fit line:\n" );
     fprintf( LVSLOG,
@@ -382,62 +212,14 @@ void find_fsdb_score_cut( FSDB fsdb, double* slope, double* intercept ) {
   }
 }
 
-/* write_fastq
-   Args: (1) char* fn
-         (2) FSDB fsdb
-   Returns: void
-   Writes a fastq database of sequences to the filename given of all
-   sequences and quality scores in the fsdb
-*/
-void write_fastq( char* fn, FSDB fsdb ) {
-  FILE* f;
-  char rc, tr;
-  FragSeqP fs;
-  f = fileOpen( fn, "w" );
-  size_t i;
-  for ( i = 0; i < fsdb->num_fss; i++ ) {
-    fs = fsdb->fss[i];
-    if (fs->rc) {
-      rc = 'R';
-    }
-    else {
-      rc = 'F';
-    }
-    if ( fs->trimmed ) {
-      tr = 'T';
-    }
-    else {
-      tr = 'U';
-    }
-    fprintf( f, "@%s %c %c\n", fs->id, rc, tr );
-    fprintf( f, "%s\n", fs->seq );
-    fprintf( f, "+%s\n", fs->id );
-    fprintf( f, "%s\n", fs->qual );
-  }
-  fclose( f );
-  return;
-}
-
 /* set_uniq_in_fsdb
    Args: (1) FSDB fsdb - has fss field SORTED!
-         (2) int just_outer_coords - boolean; TRUE means just use
-	     outer coordinate info (strand, start, end) to
-	     decide about uniqueness; FALSE is a more complex
-	     scheme. If a sequence is has the same start, but a
-	     lower end point, it is not unique unless it is also
-	     trimmed. This is to handle 454 data where occassionally
-	     sequences "end" because of some filter, but not the
-	     natural end of the molecule. Then, repeats can show up
-	     in different lengths!
-         (3) unsigned short tolerance - allow this much tolerance for start and end coordinates. 
- *           Due to oversequencing, PCR can result in redundant reads that differ only a few bases. 
    Returns: void
    Goes through each sequence and the sets the unique_best flag
    to true for the first of each kind (same as, ae, and rc) and
    sets unique_best to false for all others
 */
-
-void set_uniq_in_fsdb( FSDB fsdb, const int just_outer_coords , const unsigned short tolerance) {
+void set_uniq_in_fsdb( FSDB fsdb ) {
   int i, curr_rc, curr_as, curr_ae;
   FragSeqP fs;
   fs = fsdb->fss[0];
@@ -452,83 +234,59 @@ void set_uniq_in_fsdb( FSDB fsdb, const int just_outer_coords , const unsigned s
     /* If new guy is same as last guy, on strand, start, and end,
        he's redundant (not unique) */
     if ( (fs->rc == curr_rc) &&
-	 (abs(fs->as - curr_as) <= tolerance) &&
-	 (abs(fs->ae - curr_ae) <= tolerance)) {
+	 (fs->as == curr_as) &&
+	 (fs->ae == curr_ae) ) {
       fs->unique_best = 0;
     }
 
     else {
-      if ( just_outer_coords ) {
-	fs->unique_best = 1;
-      }
-      else { // can still be the weird thing where it ends before
-	// the previous guy and is untrimmed
-	/* forward strand */
-	if ( fs->rc == 0 ) {
-	  /* Can still be redundant if it's untrimmed */
-	  if ( fs->as == curr_as ) {
-	    if ( fs->trimmed ) {
-	      /* strand and start match, end does not and it's trimmed:
-		 therefore, it's a unique best */
-	      fs->unique_best = 1;
-	    }
-	    else {
-	      fs->unique_best = 0;
-	    }
+      /* forward strand */
+      if ( fs->rc == 0 ) {
+	/* Can still be redundant if it's untrimmed */
+	if ( fs->as == curr_as ) {
+	  if ( fs->trimmed ) {
+	    /* strand and start match, end does not and it's trimmed:
+	       therefore, it's a unique best */
+	    fs->unique_best = 1;
+	    curr_ae = fs->ae;
 	  }
 	  else {
-	    fs->unique_best = 1;
+	    fs->unique_best = 0;
 	  }
 	}
-	
-	/* reverse strand */
 	else {
-	  if ( fs->ae == curr_ae ) {
-	    if ( fs->trimmed ) {
-	      /* strand and end (beginning of rc molecule, dummy) match
-		 but start (end, really) and it's trimmed, therefore
-		 it's a unique best */
-	      fs->unique_best = 1;
-	    }
-	    else {
-	      fs->unique_best = 0;
-	    }
-	  }
-	  
-	  else {
-	    fs->unique_best = 1;
-	  }
+	  curr_rc = fs->rc;
+	  curr_as = fs->as;
+	  curr_ae = fs->ae;
+	  fs->unique_best = 1;
 	}
       }
-      curr_rc = fs->rc;
-      curr_as = fs->as;
-      curr_ae = fs->ae;
+
+      /* reverse strand */
+      else {
+	if ( fs->ae == curr_ae ) {
+	  if ( fs->trimmed ) {
+	    /* strand and end (beginning of rc molecule, dummy) match
+	       but start (end, really) and it's trimmed, therefore
+	       it's a unique best */
+	    fs->unique_best = 1;
+	    curr_as = fs->as;
+	  }
+	  else {
+	    fs->unique_best = 0;
+	  }
+	}
+
+	else {
+	  curr_rc = fs->rc;
+	  curr_as = fs->as;
+	  curr_ae = fs->ae;
+	  fs->unique_best = 1;
+	}
+      }
     }
   }
 }
-
-/* asp_len
-   Args: (1) AlnSeqP asp - pointer to an AlnSeq
-   Returns (1) int - total length of sequence 
-   This function finds the total length of the sequence in this
-   aligned sequence fragment. This is the sum of the sequence
-   in the asp->seq field and all of the inserted sequence (if any)
-   in the asp->ins array
-*/
-int asp_len( AlnSeqP asp ) {
-  int i;
-  int aln_seq_len = 0;
-  int tot_seq_len = 0;
-  aln_seq_len = (asp->end - asp->start + 1);
-  tot_seq_len = (asp->end - asp->start + 1);
-  for( i = 0; i < aln_seq_len; i++ ) {
-    if ( asp->ins[i] != NULL ) {
-      tot_seq_len += strlen( asp->ins[i] );
-    }
-  }
-  return tot_seq_len;
-}
-
 
 
 /* pop_smp_from_FSDB
@@ -642,12 +400,9 @@ int add_fs2fsdb( FragSeqP fs, FSDB fsdb ) {
   strcpy( next_fs->id, fs->id );
   strcpy( next_fs->desc, fs->desc );
   strcpy( next_fs->seq, fs->seq );
-  strcpy( next_fs->qual, fs->qual );
-  next_fs->qual_sum   = fs->qual_sum;
   next_fs->trim_point = fs->trim_point;
   next_fs->trimmed    = fs->trimmed;
   next_fs->seq_len    = fs->seq_len;
-  next_fs->strand_known = fs->strand_known;
   next_fs->rc         = fs->rc;
   next_fs->as         = fs->as;
   next_fs->ae         = fs->ae;
@@ -655,8 +410,7 @@ int add_fs2fsdb( FragSeqP fs, FSDB fsdb ) {
   next_fs->front_asp  = fs->front_asp;
   next_fs->back_asp   = fs->back_asp;
   next_fs->unique_best = fs->unique_best;
-  next_fs->num_inputs  = fs->num_inputs;
-  next_fs->qss = NULL;
+
   /* Bump up the num_fss */
   fsdb->num_fss += 1;
   return 1;
@@ -683,7 +437,7 @@ int grow_FSDB( FSDB fsdb ) {
   /* DEBUG INFO */
   if ( DEBUG ) {
     fprintf( stderr, "Growing fsdb from %d to %d\n",
-	     (int)fsdb->size, new_size );
+	     fsdb->size, new_size );
   }
 
   /* Allocate another chunck of memories as big as the

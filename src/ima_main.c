@@ -1,6 +1,4 @@
-#include "mia.h"
-
-
+#include "ima.h"
 
 /* reiterate_assembly
    Args: (1) a pointer to a sequence to be used as the new reference
@@ -32,7 +30,6 @@ void reiterate_assembly( char* new_ref_seq, int iter_num,
     aln_seq_len;
   FragSeqP fs;
   char iter_ref_id[MAX_ID_LEN + 1];
-  char tmp_rc[INIT_ALN_SEQ_LEN + 1];
   char iter_ref_desc[] = "iteration assembly";
 
   /* Set up maln->ref
@@ -57,6 +54,10 @@ void reiterate_assembly( char* new_ref_seq, int iter_num,
     strcpy( maln->ref->desc, iter_ref_desc );
   }
 
+  maln->ref->gaps = (int*)save_malloc(ref_len * sizeof(int));
+  for( i = 0; i < ref_len; i++ ) {
+    maln->ref->gaps[i] = 0;
+  }
   maln->ref->seq_len = ref_len;
   maln->ref->size = (ref_len+1);
 
@@ -66,12 +67,6 @@ void reiterate_assembly( char* new_ref_seq, int iter_num,
   else {
     maln->ref->wrap_seq_len = maln->ref->seq_len;
   }
-  maln->ref->gaps = 
-    (int*)save_malloc((maln->ref->wrap_seq_len+1) * sizeof(int));
-  for( i = 0; i <= maln->ref->wrap_seq_len; i++ ) {
-    maln->ref->gaps[i] = 0;
-  }
-
   /* Reset its AlnSeqArray ->ins to all point to null */
   for ( i = 0; i < maln->num_aln_seqs; i++ ) {
     aln_seq_len = strlen(maln->AlnSeqArray[i]->seq);
@@ -106,169 +101,89 @@ void reiterate_assembly( char* new_ref_seq, int iter_num,
      just use the rcancsubmat */
   for( i = 0; i < fsdb->num_fss; i++ ) {
     fs = fsdb->fss[i];
-
-    /* Special case of distant reference and 
-       !fs->strand_known => try to realign both strands
-       against the entire reference to learn the 
-       strand and alignment region
-    */
-    if ( maln->distant_ref &&
-	 (fs->strand_known == 0 ) &&
-	 (iter_num > 1) ) {
-      ref_start = 0;
-      ref_end = maln->ref->wrap_seq_len;
-      ref_frag_len = ref_end - ref_start;
-      a->seq1 = &maln->ref->seq[0];
-      a->len1 = ref_frag_len;
-      pop_s1c_in_a( a );
-      a->seq2 = fs->seq;
-      a->len2 = strlen( a->seq2 );
-      pop_s2c_in_a( a );
-      if ( a->hp ) {
-	pop_hpl_and_hps( a->seq2, a->len2, a->hprl, a->hprs );
-	pop_hpl_and_hps( a->seq1, a->len1, a->hpcl, a->hpcs );
-      }
-      /* Align it! */
-      dyn_prog( a );
-      /* Find the best forward score */
-      max_score = max_sg_score( a );
-      if ( max_score > FIRST_ROUND_SCORE_CUTOFF ) {
-	fs->strand_known = 1;
-	fs->rc = 0;
-	find_align_begin( a );
-	fs->as = a->abc;
-	fs->ae = a->aec;
-	fs->score = max_score;
-      }
-
-      /* Now, try reverse complement */
-      aln_seq_len = strlen( fs->seq );
+    if ( fs->rc ) {
       a->submat = rcancsubmat;
-      for ( j = 0; j < aln_seq_len; j++ ) {
-	tmp_rc[j] = revcom_char(fs->seq[aln_seq_len-(j+1)]);
-      }
-      tmp_rc[aln_seq_len] = '\0';
-      a->seq2 = tmp_rc;
-      pop_s2c_in_a( a );
-      if ( a->hp ) {
-	pop_hpl_and_hps( a->seq2, a->len2, a->hprl, a->hprs );
-	pop_hpl_and_hps( a->seq1, a->len1, a->hpcl, a->hpcs );
-      }
-      dyn_prog( a );
-      max_score = max_sg_score( a );
-      if ( (max_score > FIRST_ROUND_SCORE_CUTOFF) &&
-	   (max_score > fs->score) ) {
-	fs->strand_known = 1;
-	fs->rc = 1;
-	find_align_begin( a );
-	fs->as = a->abc;
-	fs->ae = a->aec;
-	fs->score = max_score;
-	strcpy( fs->seq, tmp_rc );
-      }
+    }
+    else {
+      a->submat = ancsubmat;
     }
 
-    /* Do we know the strand (either because we've always
-       known it or we just learned it, doesn't matter) */
-    if ( fs->strand_known ) {
-      if ( fs->rc ) {
-	a->submat = rcancsubmat;
-      }
-      else {
-	a->submat = ancsubmat;
-      }
+    /* Set up the alignment limits on the reference */
+    if ( (fs->as - REALIGN_BUFFER) < 0 ) {
+      ref_start = 0;
+    }
+    else {
+      ref_start = (fs->as - REALIGN_BUFFER);
+    }
+    if ( (fs->ae + REALIGN_BUFFER + 1) > maln->ref->wrap_seq_len ) {
+      ref_end = maln->ref->wrap_seq_len;
+    }
+    else {
+      ref_end = fs->ae + REALIGN_BUFFER;
+    }
+    ref_frag_len = ref_end - ref_start;
+    a->seq1 = &maln->ref->seq[ref_start];
+    a->len1 = ref_frag_len;
+    pop_s1c_in_a( a );
 
-      a->seq2 = fs->seq;
-      a->len2 = strlen( a->seq2 );
-      pop_s2c_in_a( a );
+    a->seq2 = fs->seq;
+    a->len2 = strlen( a->seq2 );
+    pop_s2c_in_a( a );
+    /* If we want the homopolymer discount, the necessary arrays of
+       hp starts and lengths must be set up anew */
+    if ( a->hp ) {
+      pop_hpl_and_hps( a->seq2, a->len2, a->hprl, a->hprs );
+      pop_hpl_and_hps( a->seq1, a->len1, a->hpcl, a->hpcs );
+    }
 
-      /* Set up the alignment limits on the reference */
-      if ( ((fs->as - REALIGN_BUFFER) < 0 ) ) {
-	ref_start = 0;
-      }
-      else {
-	ref_start = (fs->as - REALIGN_BUFFER);
-      }
-      if ( (fs->ae + REALIGN_BUFFER + 1) > 
-	   maln->ref->wrap_seq_len ) {
-	ref_end = maln->ref->wrap_seq_len;
-      }
-      else {
-	ref_end = fs->ae + REALIGN_BUFFER;
-      }
-
-      /* Check to make sure the regions encompassed by ref_start to
-	 ref_end is reasonable given how long this fragment is. If
-	 not, just realign this whole mofo again because the reference
-	 has probably changed a lot between iterations */
-      if ( (ref_start + a->len2) > ref_end ) {
-	ref_start = 0;
-	ref_end = maln->ref->wrap_seq_len;
-      }
+    /* Align it! */
+    dyn_prog( a );
     
-      ref_frag_len = ref_end - ref_start;
-      a->seq1 = &maln->ref->seq[ref_start];
-      a->len1 = ref_frag_len;
-      pop_s1c_in_a( a );
-      
-      /* If we want the homopolymer discount, the necessary arrays of
-	 hp starts and lengths must be set up anew */
-      if ( a->hp ) {
-	pop_hpl_and_hps( a->seq2, a->len2, a->hprl, a->hprs );
-	pop_hpl_and_hps( a->seq1, a->len1, a->hpcl, a->hpcs );
-      }
+    /* Find the best score */
+    max_score = max_sg_score( a );
+    find_align_begin( a );
 
-      /* Align it! */
-      dyn_prog( a );
+    /* First, put all alignment in front_pwaln */
+    populate_pwaln_to_begin( a, front_pwaln );
     
-      /* Find the best score */
-      max_score = max_sg_score( a );
+    /* Load up front_pwaln */
+    strcpy( front_pwaln->ref_id, maln->ref->id );
+    strcpy( front_pwaln->ref_desc, maln->ref->desc );
+    
+    strcpy( front_pwaln->frag_id, fs->id );
+    strcpy( front_pwaln->frag_desc, fs->desc );
+    
+    front_pwaln->trimmed = fs->trimmed;
+    front_pwaln->revcom  = fs->rc;
+    front_pwaln->segment = 'a';
+    front_pwaln->score = a->best_score;
+    
+    front_pwaln->start = a->abc + ref_start;
+    front_pwaln->end   = a->aec + ref_start;
 
-      find_align_begin( a );
+    /* Update stats for this FragSeq */
+    fs->as = a->abc + ref_start;
+    fs->ae = a->aec + ref_start;
+    fs->unique_best = 1;
+    fs->score = a->best_score;
 
-      /* First, put all alignment in front_pwaln */
-      populate_pwaln_to_begin( a, front_pwaln );
-      
-      /* Load up front_pwaln */
-      strcpy( front_pwaln->ref_id, maln->ref->id );
-      strcpy( front_pwaln->ref_desc, maln->ref->desc );
-      
-      strcpy( front_pwaln->frag_id, fs->id );
-      strcpy( front_pwaln->frag_desc, fs->desc );
-      
-      front_pwaln->trimmed = fs->trimmed;
-      front_pwaln->revcom  = fs->rc;
-      front_pwaln->num_inputs = fs->num_inputs;
-      front_pwaln->segment = 'a';
-      front_pwaln->score = a->best_score;
-  
-      front_pwaln->start = a->abc + ref_start;
-      front_pwaln->end   = a->aec + ref_start;
+    if ( front_pwaln->end > maln->ref->seq_len ) {
+      /* This alignment wraps around - adjust the end to
+	 demonstrate this for split_maln check */
+      front_pwaln->end = front_pwaln->end - maln->ref->seq_len;
+    }
 
-      /* Update stats for this FragSeq */
-      fs->as = a->abc + ref_start;
-      fs->ae = a->aec + ref_start;
-      fs->unique_best = 1;
-      fs->score = a->best_score;
-
-      if ( front_pwaln->end > maln->ref->seq_len ) {
-	/* This alignment wraps around - adjust the end to
-	   demonstrate this for split_maln check */
-	front_pwaln->end = front_pwaln->end - maln->ref->seq_len;
-      }
-
-      if ( front_pwaln->start > front_pwaln->end ) {
-	/* Move wrapped bit to back_pwaln */
-	split_pwaln( front_pwaln, back_pwaln, maln->ref->seq_len );
-	merge_pwaln_into_maln( front_pwaln, maln );
-	fs->front_asp = maln->AlnSeqArray[maln->num_aln_seqs - 1];
-	merge_pwaln_into_maln( back_pwaln, maln );
-	fs->back_asp = maln->AlnSeqArray[maln->num_aln_seqs - 1];
-      }
-      else { 
-	merge_pwaln_into_maln( front_pwaln, maln );
-	fs->front_asp = maln->AlnSeqArray[maln->num_aln_seqs - 1];
-      }
+    if ( front_pwaln->start > front_pwaln->end ) {
+      /* Move wrapped bit to back_pwaln */
+      split_pwaln( front_pwaln, back_pwaln, maln->ref->seq_len );
+      merge_pwaln_into_maln( front_pwaln, maln );
+      fs->front_asp = maln->AlnSeqArray[maln->num_aln_seqs - 1];
+      merge_pwaln_into_maln( back_pwaln, maln );
+      fs->back_asp = maln->AlnSeqArray[maln->num_aln_seqs - 1];
+    }
+    else { 
+      merge_pwaln_into_maln( front_pwaln, maln );
+      fs->front_asp = maln->AlnSeqArray[maln->num_aln_seqs - 1];
     }
   }
   return;
@@ -291,29 +206,34 @@ inline int all_lower( const char* seq, const int kmer_len ) {
   return 1;
 }
 
+/* all_upper
+   Args: (1) Pointer to char array (seq)
+         (2) int number of characters to check (len)
+   Returns: int 1 => first len charaters in seq are all upper case
+                0 => at least one of the characters is not upper case
+*/
+inline int all_upper( const char* seq, const int kmer_len ) {
+  size_t i;
+  for( i = 0; i < kmer_len; i++ ) {
+    if ( islower( seq[i] ) ) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+
 
 void help( void ) {
-  printf( "\n\n%s -- Mapping Iterativ Assembler V %s\n",PACKAGE_NAME, PACKAGE_VERSION);
-  printf( "       A tool for creating short read assemblies.\n\n");
-  printf( "Copyright Richard E. Green, Michael Siebauer 2008-2009\n");
-  printf( "Report bugs to <%s>.\n",PACKAGE_BUGREPORT);
-  printf( "===============================+++++++++++++==\n");
-  printf( "\nUsage:\n");
-  printf( "mia -r <reference sequence>\n" );
-  printf( "    -f <fasta or fastq file of fragments to align>\n" );
-  printf( "    -s <substitution matrix file> (if not supplied an default matrix is used)\n" );
+  printf( "ima -r <reference sequence>\n" );
+  printf( "    -f <fasta file of fragments to align>\n" );
+  printf( "    -s <substitution matrix> (flat.submat.txt)\n" );
   printf( "    -m <root file name for maln output file(s)> (assembly.maln.iter)\n" );
   printf( "    \nFILTER parameters:\n" );
-  printf( "    -u fasta database has repeat sequences, keep one based on alignment score\n" );
-  printf( "    -U fasta database has repeat sequences, keep one based on sum of q-scores\n" );
-  printf( "    -C<tolerance> collapse sequences with same start, end, strand info into a single sequence\n" );  
-  printf( "       Allow <tolerance> bases difference for start and end coordinates\n" );
-  printf( "       Important: keep NO SPACE between parameter and value: e.g. -C3\n" );
-  printf( "    -A use adapter presence and coordinate information to more aggressively\n" );
-  printf( "       remove repeat sequences - suitable only for 454 sequences that have not\n" );
-  printf( "       already been adapter trimmed\n" );
+  printf( "    -u fasta database has repeat sequences, remove them\n" );
   printf( "    -T fasta database has adapters, trim these\n" );
-  printf( "    -a <adapter sequence or code>\n" );
+  printf( "    -a <adapter type;      N  => Neandertal 454 adapter\n" );
+  printf( "                      default => standard 454 adapter>\n" );
   printf( "    -k <use kmer filter with kmers of this length>\n" );
   printf( "    -I <filename of list of sequence IDs to use, ignoring all others>\n" );
   printf( "    \nALIGNMENT parameters:\n" );
@@ -327,9 +247,6 @@ void help( void ) {
   printf( "    -H <do not do dynamic score cutoff, instead use this Hard score cutoff>\n" );
   printf( "    -S <slope of length/score cutoff line>\n" );
   printf( "    -N <intercept of length/score cutoff line>\n" );
-  printf( "The default substitution matrix used the following parameters:\n" );
-  printf( "  MATCH=%d, MISMATCH=%d, N=%d for all positions\n", FLAT_MATCH, FLAT_MISMATCH, N_SCORE);
-
   printf( "The procedure for removing bad-scoring alignments from the assembly is:\n" );
   printf( "Default: fit a line to length versus score and remove reads that are\n" );
   printf( "less that SCORE_CUTOFF_BUFFER than the average score for its length.\n" );
@@ -348,29 +265,22 @@ void help( void ) {
   printf("      others is the assembly base. If none is, then N is the assembly base.\n" );
   printf( "2 => The best scoring base whose aggregate score is better than MIN_SCORE_CONS\n" );
   printf( "     is the assembly base. If none is, then N is the assembly base.\n" );
-  printf( "If -T is specified, mia will attempt to find and trim adapters on\n" );
-  printf( "each sequence. The adapter sequence itself can be specified by a\n" );
-  printf( "one letter code as argument to -a. N or n => Neandertal adapter\n" );
-  printf( "                  any other single letter => Standard GS FLX adapter\n" );
-  printf( "              sequence (less than 127 nt) => user-specified adapter\n" );
 }
 
 int main( int argc, char* argv[] ) {
-
   char mat_fn[MAX_FN_LEN+1];
   char maln_fn[MAX_FN_LEN+1];
-  char fastq_out_fn[MAX_FN_LEN+1];
   char maln_root[MAX_FN_LEN+1];
   char ref_fn[MAX_FN_LEN+1];
   char frag_fn[MAX_FN_LEN+1];
+  char adapter_code[2]; // place to keep the argument for -a (which adapter to trim)
+  char* c_time; // place to keep asctime string
   char* test_id;
 
   int ich;
   int any_arg = 0;
   int Hard_cut = 0; // If 0 => use dynamic score cutoff, if > 0 use this instead
   int circular = 0; // Boolean, TRUE if reference sequence is circular
-  int make_fastq = 0; // Boolean, TRUE if we should also output fastq database of seqs in assembly
-  int seq_code = 0; // code to indicate sequence input format; 0 => fasta; 1 => fastq
   int do_adapter_trimming = 0; // Boolean, TRUE if we should try to trim
                                // adapter from input sequences
   int iterate = 0; //Boolean, TRUE means interate the assembly until convergence
@@ -378,12 +288,7 @@ int main( int argc, char* argv[] ) {
   int FINAL_ONLY = 0; //Boolean, TRUE means only write out the final assembly maln file
                       //         FALSE (default) means write out each one
   int ids_rest = 0; // Boolean, TRUE means restrict analysis to IDs in input file
-  int repeat_filt = 0; //Boolean, TRUE means remove sequences that are repeats, 
-                       // keeping best-scoring representative
-  int repeat_qual_filt = 0; //Boolean, TRUE means remove sequences that are repeats,
-                            // keeping best quality score sum representative
-  int just_outer_coords = 1; // Boolean, TRUE means just use strand, start, and end to
-                             // determine if sequences are redundant
+  int repeat_filt = 0; //Boolean, TRUE means remove sequences that are repeats
   int SCORE_CUT_SET = 0; //Boolean, TRUE means user has set a length/score cutoff line
   int seen_seqs = 0;
   int hp_special = 0; // Boolean, TRUE means user wants hp gap special discount
@@ -395,10 +300,6 @@ int main( int argc, char* argv[] ) {
   int soft_mask = 0; //Boolean; TRUE => do not use kmers that are all lower-case
                      //        FALSE => DO use all kmers, regardless of case
   int iter_num; // Number of iterations of assembly done
-  int collapse = 0; // Boolean; TRUE => collapse input sequences in FSDB to improve
-                    //                  sequence quality
-                    //          FALSE => (default) keep all sequences
-  int TOLERANCE = 0; // When reads should be collapsed allow this many bases tolerance concerning start and end coordinates
   double slope     = DEF_S; // Set these to default unless, until user changes
   double intercept = DEF_N; // them 
   MapAlignmentP maln, // Contains all fragments initially better
@@ -407,9 +308,9 @@ int main( int argc, char* argv[] ) {
                       // better than SCORE_CUTOFF
   AlignmentP fw_align, rc_align, adapt_align;
   
-  PSSMP ancsubmat   = init_flatsubmat();
+  PSSMP ancsubmat = init_flatsubmat();
   PSSMP rcancsubmat = revcom_submat(ancsubmat);
-  const PSSMP flatsubmat  = init_flatsubmat();
+  PSSMP flatsubmat = init_flatsubmat();
 
   KPL* fkpa; // Place to keep forward kmer array if user requested kmer 
   KPL* rkpa; // Place to keep reverse kmer array if user requested kmer 
@@ -422,36 +323,23 @@ int main( int argc, char* argv[] ) {
 
 
   char maln_root_def[] = "assembly.maln.iter";
-  extern int optind;
   extern char* optarg;
   char neand_adapt[] = "GTCAGACACGCAACAGGGGATAGGCAAGGCACACAGGGGATAGG";
   char stand_adapt[] = "CTGAGACACGCAACAGGGGATAGGCAAGGCACACAGGGGATAGG";
-  char user_def_adapt[128];
   char* adapter; // set to either neand_adapt or stand_adapt based on user preference
   adapter = neand_adapt; // Default is Neandertal
   char* assembly_cons;
   char* last_assembly_cons;
   int cc = 1; // consensus code for calling consensus base
-  int i;
 
   /* Set the default output filename until the user overrides it */
   strcpy( maln_root, maln_root_def );
 
-
   /* Process command line arguments */
-  while( (ich=getopt( argc, argv, "s:r:f:m:a:p:H:I:S:N:k:q:FTciuhDMUAC::" )) != -1 ) {
+  while( (ich=getopt( argc, argv, "s:r:f:m:a:p:H:I:S:N:k:FTciuhDM" )) != -1 ) {
     switch(ich) {
     case 'c' :
       circular = 1;
-      break;
-    case 'q' :
-      make_fastq = 1;
-      strcpy( fastq_out_fn, optarg );
-    case 'C' :
-      collapse = 1;      
-      if (optarg != NULL)
-        TOLERANCE = atoi( optarg );
-      fprintf( stderr, "setting collapsing tolerance to %d\n", TOLERANCE);
       break;
     case 'i' :
       iterate = 1;
@@ -461,12 +349,6 @@ int main( int argc, char* argv[] ) {
       break;
     case 'u' :
       repeat_filt = 1;
-      break;
-    case 'A' :
-      just_outer_coords = 0;
-      break;
-    case 'U' :
-      repeat_qual_filt = 1;
       break;
     case 'D' :
       distant_ref = 1;
@@ -480,7 +362,7 @@ int main( int argc, char* argv[] ) {
       ids_rest = 1;
       break;
     case 'H' :
-      Hard_cut = atoi( optarg );      
+      Hard_cut = atoi( optarg );
       if ( Hard_cut <= 0 ) {
 	fprintf( stderr, "Hard cutoff (-H) must be positive\n" );
 	help();
@@ -493,9 +375,7 @@ int main( int argc, char* argv[] ) {
       break;
     case 's' :
       strcpy( mat_fn, optarg );
-      free( ancsubmat ); // trash the flat submat we initialized with
       ancsubmat   = read_pssm( mat_fn );
-      free( rcancsubmat ); // trash the init rcsubmat, too
       rcancsubmat = revcom_submat( ancsubmat );
       any_arg = 1;
       break;
@@ -519,24 +399,13 @@ int main( int argc, char* argv[] ) {
       do_adapter_trimming = 1;
       break;
     case 'a' :
-      if ( strlen( optarg ) > 127 ) {
-	  fprintf( stderr, "That adapter is too big!\nMIA will use the standard adapter.\n" );
-	  adapter = stand_adapt;
+      strcpy( adapter_code, optarg );
+      if ( !( (adapter_code[0] == 'n') ||
+	      (adapter_code[0] == 'N') ) ) {
+	adapter = stand_adapt;
       }
       else {
-	strcpy( user_def_adapt, optarg );
-	  if ( strlen( user_def_adapt ) > 1 ) {
-	    adapter = user_def_adapt;
-	  }
-	  else {
-	    if ( !( (user_def_adapt[0] == 'n') ||
-		    (user_def_adapt[0] == 'N') ) ) {
-	      adapter = stand_adapt;
-	    }
-	    else {
-	      adapter = neand_adapt;
-	    }
-	  }
+	adapter = neand_adapt;
       }
       break;
     case 'S' :
@@ -561,22 +430,14 @@ int main( int argc, char* argv[] ) {
     exit( 0 );
   }
 
-  if ( optind != argc ) {
-    fprintf( stderr, "There seems to be some extra cruff on the command line that mia does not understand.\n" );
-    exit(0);
-  }
-
   /* Start the clock... */
   curr_time = time(NULL);
-  //  c_time = (char*)save_malloc(64*sizeof(char));
-  //  c_time = asctime(localtime(&curr_time));
+  c_time = (char*)save_malloc(64*sizeof(char));
+  c_time = asctime(localtime(&curr_time));
 
   /* Announce that we're starting */
-  fprintf( stderr, 
-	   "Starting assembly of %s\nusing %s\nas reference at %s\n", 
-	   frag_fn, ref_fn, 
-	   asctime(localtime(&curr_time)) );
-
+  fprintf( stderr, "Starting assembly of %s\nusing %s\nas reference at %s\n", 
+	   frag_fn, ref_fn, c_time );
 
   /* Set up the maln structure */
   maln = (MapAlignmentP)init_map_alignment();
@@ -610,12 +471,6 @@ int main( int argc, char* argv[] ) {
   else {
     maln->ref->wrap_seq_len = maln->ref->seq_len;
   }
-  /* Add space for the gaps array */
-  maln->ref->gaps = (int*)save_malloc((maln->ref->wrap_seq_len+1) *
-				      sizeof(int));
-  for( i = 0; i <= maln->ref->wrap_seq_len; i++ ) {
-    maln->ref->gaps[i] = 0;
-  }
 
   /* Set up fkpa and rkpa for list of kmers in the reference (forward and
      revcom strand) if user wants kmer filtering */
@@ -645,11 +500,11 @@ int main( int argc, char* argv[] ) {
      complement alignments */
   fw_align = (AlignmentP)init_alignment( INIT_ALN_SEQ_LEN,
 					 (maln->ref->wrap_seq_len + 
-					  (2*INIT_ALN_SEQ_LEN)),
+					  INIT_ALN_SEQ_LEN),
 					 0, hp_special );
   rc_align = (AlignmentP)init_alignment( INIT_ALN_SEQ_LEN,
 					 (maln->ref->wrap_seq_len + 
-					  (2*INIT_ALN_SEQ_LEN)),
+					  INIT_ALN_SEQ_LEN),
 					 1, hp_special );
 
   /* Set up the alignment structure for adapter trimming, if user
@@ -659,7 +514,7 @@ int main( int argc, char* argv[] ) {
 					      INIT_ALN_SEQ_LEN,
 					      0, hp_special );
     /* Setup the flatsubmat */
-    //flatsubmat = init_flatsubmat();
+    flatsubmat = init_flatsubmat();
     adapt_align->submat = flatsubmat;
 
     adapt_align->seq2   = adapter;
@@ -707,21 +562,19 @@ int main( int argc, char* argv[] ) {
      alignment score better than the cutoff, merge it into the maln
      alignment. Keep track of those that don't, too. */
   FF = fileOpen( frag_fn, "r" );
-  seq_code = find_input_type( FF );
-
   //LOG = fileOpen( log_fn, "w" );
   front_pwaln = (PWAlnFragP)save_malloc( sizeof(PWAlnFrag));
   back_pwaln  = (PWAlnFragP)save_malloc( sizeof(PWAlnFrag));
 
   /* Give some space to remember the IDs as we see them */
-  test_id = (char*)save_malloc((MAX_ID_LEN + 1) * sizeof(char));
+  test_id = (char*)save_malloc(MAX_ID_LEN * sizeof(char));
 
   /* Announce we're strarting alignment of fragments */
   fprintf( stderr, "Starting to align sequences to the reference...\n" );
 
-  while( read_next_seq( FF, frag_seq, seq_code ) ) {
+  while( read_fasta( FF, frag_seq ) ) {
     seen_seqs++;
-    strncpy( test_id, frag_seq->id, MAX_ID_LEN + 1);
+    strcpy( test_id, frag_seq->id );
     if ( DEBUG ) {
       fprintf( stderr, "%s\n", frag_seq->id );
     }
@@ -743,6 +596,9 @@ int main( int argc, char* argv[] ) {
       /* Check if kmer filtering. If so, filter */
       if ( new_kmer_filter( frag_seq, fkpa, rkpa, kmer_filt_len,
 			    fw_align, rc_align ) ) {
+	/*
+      if ( kmer_filter( kmer_filt_len, frag_seq, kmer_list ) ) {
+	*/
 	/* Align this fragment to the reference and write 
 	   the result into pwaln; use the ancsubmat, not the reverse
 	   complemented rcsancsubmat during this first iteration because
@@ -786,27 +642,17 @@ int main( int argc, char* argv[] ) {
   /* Filtering repeats announcement */
   fprintf( stderr, "Repeat and score filtering\n" );
 
-  /* If user wants to filter against repeats by alignment score, do it */
+  /* If user wants to filter against repeats, do it */
   if ( repeat_filt ) {  
     /* Sort fsdb by fsdb->as */
     sort_fsdb( fsdb );
     
     /* Now, everything is sorted in fsdb, so I can easily see
        which guys are unique by as, ae, and rc fields */
-    set_uniq_in_fsdb( fsdb, just_outer_coords, TOLERANCE );
+    set_uniq_in_fsdb( fsdb );
   }
 
-  /* If user wants to filter against repeats by q-score sum, do it */
-  if ( repeat_qual_filt ) {  
-    /* Sort fsdb by fsdb->as */
-    sort_fsdb_qscore( fsdb );
-    
-    /* Now, everything is sorted in fsdb, so I can easily see
-       which guys are unique by as, ae, and rc fields */
-    set_uniq_in_fsdb( fsdb, just_outer_coords, TOLERANCE );
-  }
-
-  /* Now, we know which sequences are unique, so make a
+  /* Now, we know whey sequences are unique, so make a
      culled_maln with just the unique guys */
   cull_maln_from_fsdb( culled_maln, fsdb, Hard_cut, 
 		       SCORE_CUT_SET, slope, intercept );
@@ -831,14 +677,9 @@ int main( int argc, char* argv[] ) {
 
   /* Re-align everything with revcomped
      sequence and substitution matrices, but first
-     unmask all alignment positions and collapse sequences
-     if requested
+     unmask all alignment positions
   */
   memset(fw_align->align_mask, 1, fw_align->len1);
-  if ( collapse ) {
-    collapse_FSDB( fsdb, Hard_cut, SCORE_CUT_SET, 
-		   slope, intercept );
-  }
   reiterate_assembly( last_assembly_cons, iter_num, maln, fsdb,
 		      fw_align, front_pwaln, back_pwaln, 
 		      ancsubmat, rcancsubmat );
@@ -846,11 +687,7 @@ int main( int argc, char* argv[] ) {
   fprintf( stderr, "Repeat and score filtering\n" );
   if ( repeat_filt ) {
     sort_fsdb( fsdb );
-    set_uniq_in_fsdb( fsdb, just_outer_coords, TOLERANCE );
-  }
-  if ( repeat_qual_filt ) {  
-    sort_fsdb_qscore( fsdb );
-    set_uniq_in_fsdb( fsdb, just_outer_coords, TOLERANCE );
+    set_uniq_in_fsdb( fsdb );
   }
   cull_maln_from_fsdb( culled_maln, fsdb, Hard_cut,
 		       SCORE_CUT_SET, slope, intercept );
@@ -865,9 +702,6 @@ int main( int argc, char* argv[] ) {
   sprintf( maln_fn, "%s.%d", maln_root, iter_num );
   if ( !iterate || !FINAL_ONLY ) {
     write_ma( maln_fn, culled_maln );
-    if ( make_fastq ) {
-      write_fastq( fastq_out_fn, fsdb );
-    }
   }
 
   /* Are we iterating (re-aligning to the a new consensus? */
@@ -885,13 +719,6 @@ int main( int argc, char* argv[] ) {
 
       fprintf( stderr, "Starting assembly iteration %d\n", 
 	       iter_num );
-
-      /* If the user wants collapsed sequences, now is the time */
-      if ( collapse ) {
-	collapse_FSDB( fsdb, Hard_cut, SCORE_CUT_SET, 
-		       slope, intercept );
-      }
-
       reiterate_assembly( assembly_cons, iter_num, maln, fsdb, 
 			  fw_align, front_pwaln, back_pwaln,
 			  ancsubmat, rcancsubmat );
@@ -901,11 +728,7 @@ int main( int argc, char* argv[] ) {
       fprintf( stderr, "Repeat and score filtering\n" );
       if ( repeat_filt ) {
 	sort_fsdb( fsdb );
-	set_uniq_in_fsdb( fsdb, just_outer_coords, TOLERANCE );
-      }
-      if ( repeat_qual_filt ) {
-	sort_fsdb_qscore( fsdb );
-	set_uniq_in_fsdb( fsdb, just_outer_coords, TOLERANCE );
+	set_uniq_in_fsdb( fsdb );
       }
       cull_maln_from_fsdb( culled_maln, fsdb, Hard_cut,
 			   SCORE_CUT_SET, slope, intercept );
@@ -933,11 +756,8 @@ int main( int argc, char* argv[] ) {
       write_ma( maln_fn, culled_maln );
     }
     else {
-      fprintf( stderr, "Assembly did not converge after %d rounds, quitting\n", iter_num );
+      fprintf( stderr, "Assembly did not converge after % rounds, quitting\n" );
       write_ma( maln_fn, culled_maln );
-    }
-    if ( make_fastq ) {
-      write_fastq( fastq_out_fn, fsdb );
     }
   }
 
@@ -947,9 +767,9 @@ int main( int argc, char* argv[] ) {
 
   /* Announce we're finished */
   curr_time = time(NULL);
-  //  c_time    = asctime(localtime(&curr_time));
+  c_time    = asctime(localtime(&curr_time));
   fprintf( stderr, "Assembly finished at %s\n",
-	   asctime(localtime(&curr_time)) );
+	   c_time );
 
   exit( 0 );
 }

@@ -1,5 +1,5 @@
-#ifndef INCLUDED_mia_H
-#define INCLUDED_mia_H
+#ifndef INCLUDED_IMA_H
+#define INCLUDED_IMA_H
 
 #include "map_align.h"
 #include "io.h"
@@ -8,18 +8,6 @@
 #include "pssm.h"
 #include "kmer.h"
 #include "assert.h"
-#include "params.h"
-
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#else
-#define PACKAGE_BUGREPORT "green@eva.mpg.de"
-#define PACKAGE_NAME "MIA"
-#define PACKAGE_VERSION "1.0"
-#endif
-
-
 
 
 
@@ -36,19 +24,6 @@
 */
 MapAlignmentP init_culled_map_alignment( MapAlignmentP src_maln ) ;
 
-/* find_alignable_len
-   Args: (1) FragSeqP fs - with value info in as, ae and seq_len fields
-         (2) RefSeqP ref - with valid info in the sequence
-   Returns: int with the alignable sequence length of this sequence
-   in this FragSeqP. That is defined as the length of this sequence minus
-   any part that overlaps positions that are "N" in the RefSeq. This
-   number is not allowed to be less that MIN_ALIGNABLE_LEN to avoid
-   having sequence with very little or no alignable sequence.
-*/
-int find_alignable_len( FragSeqP fs, RefSeqP ref );
-
-inline char best_base_at_pos( QSSP qss, size_t i );
-
 /* cull_maln_from_fsdb
    Args: (1) MapAlignmentP culled_maln - maln with enough room to put the
 	     unique AlnSeq's
@@ -62,6 +37,17 @@ inline char best_base_at_pos( QSSP qss, size_t i );
 void cull_maln_from_fsdb( MapAlignmentP culled_maln,
 			  FSDB fsdb, int Hard_cut,
 			  int SCORE_CUT_SET, double s, double n ) ;
+
+
+/* asp_len
+   Args: (1) AlnSeqP asp - pointer to an AlnSeq
+   Returns (1) int - total length of sequence
+   This function finds the total length of the sequence in this
+   aligned sequence fragment. This is the sum of the sequence
+   in the asp->seq field and all of the inserted sequence (if any)
+   in the asp->ins array
+*/
+int asp_len( AlnSeqP asp ) ;
 
 
 /* consensus_assembly_string
@@ -92,8 +78,9 @@ void make_ref_upper( RefSeqP ref ) ;
    from the beginning to the end so that any
    sequence fragment aligned to it will have a
    valid chance to align, despite the circularity
-   of the sequence. */
-void add_ref_wrap( RefSeqP ref );
+   of the sequence. Returns TRUE if this operation
+   went smoothly, FALSE otherwise */
+int add_ref_wrap( RefSeqP ref );
 
 /* init_dpm
    Args: (1) size1 - the number of rows (fragment sequence)
@@ -120,8 +107,6 @@ void dyn_prog( AlignmentP a ) ;
 */
 AlignmentP init_alignment( int size1, int size2,
 			   int rc, int hp_special ) ;
-
-void free_alignment( AlignmentP al ) ;
 
 /* pop_s1c_in_a
    Args: (1) AlignmentP a - has a->seq1 and a->len1 set to
@@ -213,9 +198,4 @@ int sg_align ( MapAlignmentP maln, FragSeqP fs, FSDB fsdb,
 	       AlignmentP fw_a, AlignmentP rc_a,
 	       PWAlnFragP front_pwaln,
 	       PWAlnFragP back_pwaln) ;
-
-
-void collapse_FSDB( FSDB fsdb, int Hard_cut, 
-		    int SCORE_CUT_SET, double s, double n ) ;
-
 #endif

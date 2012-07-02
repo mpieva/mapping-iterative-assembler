@@ -1,7 +1,6 @@
 /* $Id$ */
-#include "mia.h"
+#include "ima.h"
 
-/*
     void * save_malloc(size_t size){
         void * tmp = malloc(size);
         if (tmp == NULL)
@@ -9,7 +8,7 @@
 
         return tmp;
     }
-*/
+
 
 /* c2rcc
    Args:(1) int c - the coordinate (0-indexed)
@@ -57,342 +56,6 @@ MapAlignmentP init_culled_map_alignment( MapAlignmentP src_maln ) {
   return culled_maln;
 }
 
-/* find_alignable_len
-   Args: (1) FragSeqP fs - with value info in as, ae and seq_len fields
-         (2) RefSeqP ref - with valid info in the sequence
-   Returns: int with the alignable sequence length of this sequence
-   in this FragSeqP. That is defined as the length of this sequence minus
-   any part that overlaps positions that are "N" in the RefSeq. This
-   number is not allowed to be less that MIN_ALIGNABLE_LEN to avoid
-   having sequence with very little or no alignable sequence.
-*/
-int find_alignable_len( FragSeqP fs, RefSeqP ref ) {
-  int alignable_len;
-  size_t i, aln_end;
-  alignable_len = fs->seq_len;
-
-  /* Sequence that hangs off the edge is not alignable */
-  aln_end = fs->ae;
-  if ( aln_end > ref->wrap_seq_len ) {
-    aln_end = ref->wrap_seq_len;
-  }
-
-  for ( i = fs->as; i < aln_end; i++ ) {
-    if ( ref->seq[i] == 'N' ) {
-      alignable_len--;
-    }
-  }
-
-  if ( alignable_len < MIN_ALIGNABLE_LEN ) {
-    alignable_len = MIN_ALIGNABLE_LEN;
-  }
-
-  return alignable_len;
-}
-
-inline int valid_base( char b ) {
-  if ( (b == 'A') ||
-       (b == 'C') ||
-       (b == 'G') ||
-       (b == 'T') ) {
-    return 1;
-  }
-  else {
-    return 0;
-  }
-}
-
-/* init_QSSP
-   Args: (1) FragSeqP fs - the sequence whose data we should
-	     add to the QSSP
-   Returns: void
-   This funtion takes a FragSeqP whose qss field point to NULL.
-   It gets memory for a proper QSumSeq struct, points to it, and
-   fills it up with data for this sequence.
-*/
-void init_QSSP( FragSeqP fs ) {
-  size_t i;
-  fs->qss = (QSSP)malloc( sizeof(QSumSeq) );
-  for( i = 0; i < fs->seq_len; i++ ) {
-    fs->qss->Aqualsum[i] = 0;
-    fs->qss->Cqualsum[i] = 0;
-    fs->qss->Gqualsum[i] = 0;
-    fs->qss->Tqualsum[i] = 0;
-
-    switch( fs->seq[i] ) {
-    case 'A' :
-      fs->qss->Aqualsum[i] += fs->qual[i] - 33;
-      break;
-    case 'C' :
-      fs->qss->Cqualsum[i] += fs->qual[i] - 33;
-      break;
-    case 'G' :
-      fs->qss->Gqualsum[i] += fs->qual[i] - 33;
-      break;
-    case 'T' :
-      fs->qss->Tqualsum[i] += fs->qual[i] - 33;
-      break;
-    }
-  }
-  return;
-}
-
-void add_fs( FragSeqP cfs, FragSeqP fs ) {       
-  size_t i;
-  
-  //fprintf(stderr, "DEBUG: COLLAPSING  %s:%d..%d with %s:%d..%d\n", cfs->id, cfs->as, cfs->ae, fs->id, fs->as, fs->ae);  
-    
-  // if the new guy is longer, cfs must be extended
-  if (fs->ae > cfs->ae){              
-      if ( (fs->ae - cfs->as) > INIT_ALN_SEQ_LEN){
-          fprintf( stderr, "Collapsing %s and %s exceeds maximal sequence length. Increase \"INIT_ALN_SEQ_LEN\"\n", cfs->id, fs->id);
-          return;
-      }
-            
-      // init the qss array
-      for(i = 0; i < (fs->ae - cfs->ae); i++ ) {
-        cfs->qss->Aqualsum[cfs->seq_len + i] = 0;
-        cfs->qss->Cqualsum[cfs->seq_len + i] = 0;
-        cfs->qss->Gqualsum[cfs->seq_len + i] = 0;
-        cfs->qss->Tqualsum[cfs->seq_len + i] = 0;
-      }
-      cfs->seq_len += (fs->ae - cfs->ae);  // extend                   
-      cfs->ae = fs->ae;    // set new end coordinate                       
-      // what about alignment scores?
-  }
-  
-  
-  /* Add the base and quality information from the new guy, fs */
-  int offset = fs->as - cfs->as;  
-  if ( fs->qss == NULL ) {
-    for( i = 0; i < fs->seq_len; i++ ) {
-      switch( fs->seq[i] ) {
-      case 'A' :
-	cfs->qss->Aqualsum[offset + i] += fs->qual[i] - 33;
-	break;
-      case 'C' :
-	cfs->qss->Cqualsum[offset + i] += fs->qual[i] - 33;
-	break;
-      case 'G' :
-	cfs->qss->Gqualsum[offset + i] += fs->qual[i] - 33;
-	break;
-      case 'T' :
-	cfs->qss->Tqualsum[offset + i] += fs->qual[i] - 33;
-	break;
-      }
-    }
-  }
-  else { // wow, this guy was already collapsed from some other sequences
-    for( i = 0; i < fs->seq_len; i++ ) {
-      cfs->qss->Aqualsum[offset + i] += fs->qss->Aqualsum[i];
-      cfs->qss->Cqualsum[offset + i] += fs->qss->Cqualsum[i];
-      cfs->qss->Gqualsum[offset + i] += fs->qss->Gqualsum[i];
-      cfs->qss->Tqualsum[offset + i] += fs->qss->Tqualsum[i];
-    }
-    free( fs->qss );
-  }
-
-  /* Call a new, collapsed sequence now that the new info is there */
-  for( i = 0; i < cfs->seq_len; i++ ) {
-    cfs->seq[i] = best_base_at_pos( cfs->qss, i );
-  }
-  cfs->seq[cfs->seq_len] = '\0';
-  cfs->num_inputs += fs->num_inputs;
-  fs->num_inputs = 0;
-    
-  return;
-}
-
-inline char best_base_at_pos( QSSP qss, size_t i ) {
-  char best_base;
-  unsigned int best_score;
-  
-  /* initialize */
-  best_base = 'A';
-  best_score = qss->Aqualsum[i];
-
-  if ( qss->Cqualsum[i] > best_score ) {
-    best_base = 'C';
-    best_score = qss->Cqualsum[i];
-  }
-
-  if ( qss->Gqualsum[i] > best_score ) {
-    best_base = 'G';
-    best_score = qss->Gqualsum[i];
-  }
-
-  if ( qss->Tqualsum[i] > best_score ) {
-    best_base = 'T';
-    best_score = qss->Tqualsum[i];
-  }
-
-  if ( best_score == 0 ) {
-    return 'N';
-  }
-  return best_base;
-}
-
-/* NEED TO CHANGE THE WAY Q-SCORES ARE ADDED AND SUBTRACTED! -
-   Done (Ed 5 Oct 2009)
-*/
-/* collapse_fs
-   Args: (1) FragSeqP dest_fs - destination FragSeqP to be modified
-         (2) FragSeqP fs_to_add - FragSeqP to be melded into dest_fs
-	                          and then marked for removal
-   Returns: void
-   This function is called when two FragSeqP's are identified that
-   are redundant. They are collapsed together by going through, base
-   by base, and checking for the highest quality score. If the bases
-   match, quality scores are added. If they differ, the base with 
-   the higher q-score is set in the dest_fs and the quality scores
-   are subtracted. Non-base characters are ignored since they give
-   no information.
-   If the sequences are of different length, collapsing is not done.
-   Quality scores are capped at 255
- */
-void collapse_fs( FragSeqP dest_fs, FragSeqP fs_to_add ) { // <-- FUNCTION CURRENTLY UNUSED!
-  size_t i, seq_len;
-  int test_qual;
-  char dest_base, add_base;
-  /* Don't collapse if sequences are not the same length! */
-  if ( dest_fs->seq_len != fs_to_add->seq_len ) {
-    return;
-  }
-  seq_len = dest_fs->seq_len;
-  for( i = 0; i < seq_len; i++ ) {
-    dest_base = dest_fs->seq[i];
-    add_base  = fs_to_add->seq[i];
-    test_qual = 0;
-    /* If either base is not valid, just use the valid one
-       verbatem */
-    if ( valid_base( add_base ) ) {
-      if ( !valid_base( dest_base ) ) {
-	dest_fs->seq[i]  = add_base;
-	dest_fs->qual[i] = dest_fs->qual[i];
-      }
-
-      /* Both are valid bases, let's collapse! */
-      else {
-	if (dest_base == add_base) {
-	  test_qual = dest_fs->qual[i] + (fs_to_add->qual[i] - QUAL_ASCII_OFFSET);
-	  //dest_fs->qual[i] += (fs_to_add->qual[i] - QUAL_ASCII_OFFSET);
-	}
-	else {      /* Disagreement */
-	  
-	  /* Better quality from the destination? */
-	  if ( dest_fs->qual[i] >= fs_to_add->qual[i] ) {
-	    test_qual = dest_fs->qual[i] - 
-	      (fs_to_add->qual[i] - QUAL_ASCII_OFFSET);
-	    //dest_fs->qual[i] -= (fs_to_add->qual[i] - QUAL_ASCII_OFFSET);
-	  }
-	  /* Better quality from the new guy, switch-a-roo */
-	  else {
-	    dest_fs->seq[i] = add_base;
-	    test_qual = fs_to_add->qual[i] - 
-	      (dest_fs->qual[i] - QUAL_ASCII_OFFSET);
-	    //	    dest_fs->qual[i] = fs_to_add->qual[i] - 
-	    //	      (dest_fs->qual[i] - QUAL_ASCII_OFFSET);
-	  }
-	}
-      }
-      /* Range check */
-      if ( test_qual >= 127 ) {
-	dest_fs->qual[i] = '~';
-      }
-      if ( test_qual <= 33 ) {
-	dest_fs->qual[i] = '!';
-      }
-      /*      if ( dest_fs->qual[i] >= 127 ) {
-	dest_fs->qual[i] = 127;
-	}*/
-    }
-  }
-  dest_fs->num_inputs++;
-  fs_to_add->num_inputs = 0;
-}
-
-/* collapse_FSDB
-   Args: (1) FSDB fsdb
-   Returns: void
-   Goes through each FragSeq pointed to by fsdb->fss. They must be sorted
-   and have their unique_best field populated. For all that pass
-   the score cutoff filter and match in the rc, as, and ae fields, 
-   collapses them into a single sequence. Updates their quality scores
-   to be aggregates.
-*/
-void collapse_FSDB( FSDB fsdb, int Hard_cut, 
-		    int SCORE_CUT_SET, double s, double n ) {
-  FragSeqP fs, current_collapsing_fs;
-  size_t i, j;
-  double slope_def = 100.0;
-  double slope, intercept;
-  double min_score_for_len;
-
-   /* Using user-defined slope and intercept */
-  if ( SCORE_CUT_SET ) {
-    slope = s;
-    intercept = n;
-  }
-  else {
-    /* Find best-fit for length-score relationship */
-    find_fsdb_score_cut( fsdb, &slope, &intercept );
-  }
-
-  /* Make sure these are sensible values */
-  if ( slope <= 0 ) {
-    slope = slope_def;
-  }
- 
-  for ( i = 0; i < fsdb->num_fss; i++ ) {
-    fs = fsdb->fss[i];
-    if ( SCORE_CUT_SET ) { // ???
-      min_score_for_len = (double)(intercept + (slope * fs->seq_len));
-    }
-    else {
-      min_score_for_len = (double)(intercept + (slope * fs->seq_len));
-    }
-    if ( Hard_cut > 0 ) {
-      min_score_for_len = Hard_cut;
-    }
-
-    if ( fs->unique_best &&
-	 (fs->score >= min_score_for_len) ) {
-      current_collapsing_fs = fs;
-      /* Has this guy been a unique best before and has his qss
-	 field initialized? */
-      if ( current_collapsing_fs->qss == NULL ) {
-	/* initialize the qss */
-	init_QSSP( current_collapsing_fs );
-      }
-      i++;
-      while( (i < fsdb->num_fss) &&
-	     (fsdb->fss[i]->unique_best == 0) ) {
-	fs = fsdb->fss[i];
-	if ( fs->score >= min_score_for_len ) {
-	  /* Collapsing puts these two together, increments
-	     the num_inputs field in the current_collapsing_fs,
-	     and sets the num_inputs field to 0 in the fs to
-	     mark it for removal */
-	  //collapse_fs( current_collapsing_fs, fs );
-	  add_fs( current_collapsing_fs, fs );
-	}
-	i++;
-      }
-      i--;
-    }
-  }
-
-  /* Time to take out the trash */
-  j = 0; // j will be the next available slot
-  for ( i = 0; i < fsdb->num_fss; i++ ) {
-    if ( fsdb->fss[i]->num_inputs > 0 ) {
-      fsdb->fss[j] = fsdb->fss[i];
-      j++;
-    }
-  }
-  fsdb->num_fss = j;
-}
-
 /* cull_maln_from_fsdb
    Args: (1) MapAlignmentP culled_maln - maln with enough room to put the
 	     unique AlnSeq's
@@ -406,7 +69,7 @@ void collapse_FSDB( FSDB fsdb, int Hard_cut,
 void cull_maln_from_fsdb( MapAlignmentP culled_maln,
 			  FSDB fsdb, int Hard_cut, 
 			  int SCORE_CUT_SET, double s, double n ) {
-  int i, j, ref_gaps, new_ref_gaps, culled_nas, alignable_len;
+  int i, j, ref_gaps, new_ref_gaps, culled_nas;
   FragSeqP fs;
   AlnSeqP aln_seq;
   char* ins_seq;
@@ -442,17 +105,8 @@ void cull_maln_from_fsdb( MapAlignmentP culled_maln,
       min_score_for_len = (double)(intercept + (slope * fs->seq_len));
     }
     else {
-      /* If we're using a distant reference genome, we may have sequence
-	 that overlaps many N positions. These should not be counted
-	 againt the length of this sequence */
-      if ( culled_maln->distant_ref ) {
-	alignable_len = find_alignable_len( fs, culled_maln->ref );
-	min_score_for_len =  (double)(intercept + (slope * alignable_len));
-	  
-      }
-      else {
-	min_score_for_len =  (double)(intercept + (slope * fs->seq_len));
-      }
+      min_score_for_len =  (double)(SCORE_CUTOFF_BUFFER / 100.0) *
+	(intercept + (slope * fs->seq_len));
     }
     if ( Hard_cut > 0 ) {
       min_score_for_len = Hard_cut;
@@ -490,6 +144,29 @@ void cull_maln_from_fsdb( MapAlignmentP culled_maln,
   }
   return;
 }
+
+/* asp_len
+   Args: (1) AlnSeqP asp - pointer to an AlnSeq
+   Returns (1) int - total length of sequence 
+   This function finds the total length of the sequence in this
+   aligned sequence fragment. This is the sum of the sequence
+   in the asp->seq field and all of the inserted sequence (if any)
+   in the asp->ins array
+*/
+int asp_len( AlnSeqP asp ) {
+  int i;
+  int aln_seq_len = 0;
+  int tot_seq_len = 0;
+  aln_seq_len = (asp->end - asp->start + 1);
+  tot_seq_len = (asp->end - asp->start + 1);
+  for( i = 0; i < aln_seq_len; i++ ) {
+    if ( asp->ins[i] != NULL ) {
+      tot_seq_len += strlen( asp->ins[i] );
+    }
+  }
+  return tot_seq_len;
+}
+
 
 /* consensus_assembly_string
    Takes a maln object
@@ -645,7 +322,7 @@ void make_ref_upper( RefSeqP ref ) {
    valid chance to align, despite the circularity
    of the sequence. Returns TRUE if this operation
    went smoothly, FALSE otherwise */
-void add_ref_wrap( RefSeqP ref ) {
+int add_ref_wrap( RefSeqP ref ) {
   int wrap_len; // amount of sequence to wrap around
   
   /* Can't wrap more than is there! */
@@ -1046,9 +723,6 @@ void pop_s1c_in_a ( AlignmentP a ) {
   int r_len;
   char b;
   r_len = a->len1;
-  /*  if ( r_len < 1 ) {
-    return;
-    }*/
 
   for ( i = 0; i < r_len; i++ ) {
     b = a->seq1[i];
@@ -1421,10 +1095,9 @@ void split_pwaln (PWAlnFragP front_pwaln, PWAlnFragP back_pwaln,
 //  strcpy( back_pwaln->frag_id, front_pwaln->frag_id );
   strcpy( back_pwaln->frag_desc, front_pwaln->frag_desc );
 
-  back_pwaln->revcom     = front_pwaln->revcom;
-  back_pwaln->trimmed    = front_pwaln->trimmed;
-  back_pwaln->score      = front_pwaln->score;
-  back_pwaln->num_inputs = front_pwaln->num_inputs;
+  back_pwaln->revcom  = front_pwaln->revcom;
+  back_pwaln->trimmed = front_pwaln->trimmed;
+  back_pwaln->score   = front_pwaln->score;
 }
 
 int populate_pwaln_to_begin( AlignmentP a, PWAlnFragP pwaln ) {
@@ -1576,12 +1249,12 @@ int sg_align ( MapAlignmentP maln, FragSeqP fs, FSDB fsdb,
 
   if ( best_a->rc ) {
     /* Adjust start and end coordinates if it's an rc alignment */
-    front_pwaln->start = c2rcc( best_a->aec,
-				rs->seq_len );
-    front_pwaln->end   = c2rcc( best_a->abc,
-				rs->seq_len );
-    fs->as = c2rcc( best_a->aec, rs->seq_len );
-    fs->ae = c2rcc( best_a->abc, rs->seq_len );
+      front_pwaln->start = c2rcc( best_a->aec,
+				  rs->seq_len );
+      front_pwaln->end   = c2rcc( best_a->abc,
+				  rs->seq_len );
+      fs->as = c2rcc( best_a->aec, rs->seq_len );
+      fs->ae = c2rcc( best_a->abc, rs->seq_len );
   }
   else {
     fs->as = best_a->abc;
@@ -1634,19 +1307,6 @@ int sg_align ( MapAlignmentP maln, FragSeqP fs, FSDB fsdb,
 
     /* Everyone is born unique until its discovered that they're not */
     fs->unique_best = 1;
-    /* Every sequence has its own soul */
-    fs->num_inputs  = 1;
-
-    /* Did we see an alignment good enough for learning 
-       what strand this is on, i.e., a positive-scoring 
-       alignment? */
-    if ( fs->score > FIRST_ROUND_SCORE_CUTOFF ) {
-      fs->strand_known = 1;
-    }
-    else {
-      fs->strand_known = 0;
-    }
-
     if ( add_virgin_fs2fsdb( fs, fsdb ) == 0 ) {
       return 0;
     }
