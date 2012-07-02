@@ -27,7 +27,9 @@ AC_HEADER_STDBOOL
 
 # Checks for library functions.
 AC_FUNC_MALLOC
-AC_CHECK_FUNCS([memset strstr pow])
+AC_CHECK_FUNCS([memset strstr])
+AC_CHECK_LIB([m],[pow])
+AC_CHECK_LIB([m],[log10])
 
 AC_CONFIG_FILES([Makefile src/Makefile man/Makefile matrices/Makefile])
 AC_OUTPUT
