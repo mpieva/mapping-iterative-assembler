@@ -1,0 +1,145 @@
+.TH MIA "1" "September 2009" "mia" "User Commands"
+.SH NAME
+MIA \fB\-\-\fR Mapping Iterativ Assembler
+.IP
+A tool for creating short read assemblies.
+.SH "SYNOPSIS"
+mia [\fIOPTIONS\fR] \fB\-f\fR \fIfragment reads\fR \fB\-r\fR \fIreference sequence\fR [\fB\-s\fR \fIsubstitution matrix\fR]
+.SH OPTIONS
+.TP
+\fB\-r\fR \fIreference sequence\fR
+initial reference sequence in fasta format
+.TP
+\fB\-f\fR \fIfragment reads\fR
+fasta or fastq file of fragments to align
+.TP
+\fB\-s\fR \fIsubstitution matrix\fR
+substitution matrix file used for scoring (\fBdefault\fR: \fIflat matrix\fR)
+.TP
+\fB\-m\fR \fINAME\fR
+use \fINAME\fR as root file name for maln output file(s) (\fBdefault\fR: \fIassembly.maln.iter\fR)
+.SS "FILTER parameters:"
+.PP
+A set of filters that can be applied to the reads. 
+.TP
+\fB\-u\fR 
+fasta database has repeat sequences, keep one based on alignment score
+.TP
+\fB\-U\fR 
+fasta database has repeat sequences, keep one based on sum of q\-scores
+.TP
+\fB\-C\fR 
+collapse sequences with same start, end, strand info into a single sequence
+.TP
+\fB\-A\fR 
+use adapter presence and coordinate information to more aggressively remove repeat sequences \- suitable only for 454 sequences that have not
+already been adapter trimmed
+.TP
+\fB\-T\fR 
+fasta database has adapters, trim these (need option \fB\-a\fR)
+.TP
+\fB\-a\fR \fI<adapter sequence or code>\fR
+If \fB\-T\fR is specified, mia will attempt to find and trim adapters on each sequence. The adapter sequence itself can be specified by a one letter code as argument to \fB\-a\fR. 
+
+    \fBN\fR or \fBn\fR 	                 => Neandertal adapter
+    any other single letter     => Standard GS FLX adapter
+    sequence (less than 127 nt) => user-specified adapter
+
+.TP
+\fB\-k\fR \fILENGTH\fR
+use kmer filter with kmers of this \fIlength\fR. The kmer filter requires that a sequence fragment have at least one kmer of the specified length in common with the reference sequence in order to align it. For 36nt Solexa data, a value of \fB12\fR works well.
+.TP
+\fB\-I\fR \fIFILE\FR
+filename of list of sequence IDs to use, ignoring all others
+.SS "ALIGNMENT parameters:"
+.TP
+\fB\-p\fR \fI<consensus calling code>\fR
+The \fB\-p\fR option specifies how the new consensus assembly sequence is called at each iteration (\fBdefault\fR: \fB1\fR)
+.PD 0
+.RS
+.TP
+\fB1\fR => 
+Any base whose aggregate score is \fBMIN_SC_DIFF_CONS\fR better than all thers is the assembly base. If none is, then N is the assembly base.
+.TP
+\fB2\fR => 
+The best scoring base whose aggregate score is better than \fBMIN_SCORE_CONS\fR is the assembly base. If none is, then N is the assembly base.
+.PD
+.RE  
+.TP
+\fB\-c\fR 
+means reference/assembly is circular
+.TP
+\fB\-i\fR 
+iterate assembly until convergence
+.TP
+\fB\-F\fR 
+only output the FINAL assembly, not each iteration
+.TP
+\fB\-D\fR 
+reference sequence is only distantly related. Low scoring reads will NOT be removed after each iteration
+.TP
+\fB\-h\fR 
+give special discount for homopolymer gaps. Useful when using 454 sequencing data
+.TP
+\fB\-M\fR 
+use lower\-case soft\-masking of kmers
+.TP
+\fB\-H\fR \fISCORE\fR
+do not use dynamic score cutoff, instead use this hard \fIscore\fR cutoff
+.TP
+\fB\-S\fR \fISLOPE\fR
+\fIslope\fR of length/score cutoff line
+.TP
+\fB\-N\fR \fIINTERCEPT\fR
+\fIintercept\fR of length/score cutoff line
+
+.PP
+The procedure for removing bad\-scoring alignments from the assembly is:
+.IP
+\fBDefault\fR: fit a line to length versus score and remove reads that are less that \fBSCORE_CUTOFF_BUFFER\fR than the average score for its length.
+.IP
+If \fB\-H\fR is specified then this hard score cutoff is applied to all reads. This is preferable if all reads are the same length.
+.IP
+If \fB\-S\fR or \fB\-N\fR are specified, then these are used as the slope and intercept of a length/score line. Reads must score above this line to be included. If only one of \fB\-S\fR or \fB\-N\fR is specified then the default values are used for the other (\fBdefault S = 200.0; default N = 0.0\fR)
+
+.SH FILES 
+.SS Substitution Matrices
+.PP 
+The substitution matrices are by default installed in the directory  
+.B $PREFIX/share/mia/matrices
+but you can also write your own. The matrices are:
+.IP
+\fIancient.submat.txt\fR is designed for ancient DNA and Roche \fB454\fR sequencing data.
+.IP
+\fIancient.submat.solexa.onepass.txt\fR takes an increased rate of G/T and C/A mismatches at the end of \fBIllumina\fR reads into account.
+.IP
+\fIancient.submat.solexa.pe.txt\fR like above but for \fBpaired end\fR reads.
+
+.B
+if no matrix is supplied an generic flat matrix with this parameters will be used:
+.IP
+MATCH=200, MISMATCH=\-600, N=\-100 for all positions
+
+.SS Default ParameterS
+.PP 
+All default parameters, like \fBSCORE_CUTOFF_BUFFER\fR or \fBMIN_SCORE_CONS\fR can be changed by modifying the source file \fIparams.h\fR in the mia source directory and afterwards recompiling. 
+
+.SH DESCRIPTION
+.PP
+MIA assembles the \fIfragment reads\fR to a single consensus sequence using the \fIreference sequence\fR as guidance.
+
+.SH "AUTHOR"
+Written by Ed Green and Michael Siebauer. 
+
+.SH "REPORTING BUGS"
+Report bugs to <green@eva.mpg.de>.
+
+
+.SH "COPYRIGHT"
+Copyright © 2008 Ed Green  Michael Siebauer.
+License Perl Artistic License 2.0 <http://www.perlfoundation.org/artistic_license_2_0>. 
+This is free software: you are free to change and redistribute it.  There is NO WARRANTY, to the extent permitted by law.
+
+
+.SH "SEE ALSO"
+ma (1)

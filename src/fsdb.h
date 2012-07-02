@@ -12,6 +12,7 @@
 #include "params.h"
 #include "stdio.h"
 #include "stdlib.h"
+#include "io.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -28,9 +29,11 @@ extern "C" {
    This function defined a sort order for FragSeqP's. This order
    is useful for then determining which FragSeqP's are unique.
 */
-int fs_comp ( const void* fs1_,
-	      const void* fs2_ ) ;
+  int fs_comp ( const void* fs1_,
+		const void* fs2_ ) ;
 
+  int fs_comp_qscore ( const void* fs1_,
+		       const void* fs2_ );
 /* add_virgin_fs2fsdb
    Args: (1) FragSeqP fs - pointer to a "virgin" FragSeq
          (2) FSDB fsdb - database to add this FragSeq to
@@ -47,14 +50,15 @@ int fs_comp ( const void* fs1_,
    is then copied into the next slow of fsdb, growing fsdb
    if necessary, and incrementing its fsdb->num_fss
 */
-int add_virgin_fs2fsdb( FragSeqP fs, FSDB fsdb ) ;
+  int add_virgin_fs2fsdb( FragSeqP fs, FSDB fsdb ) ;
 
 /* Sorts the fsdb->fss on rc, as, ae, score
    After sorting all 1 strand alignments are first
    These are sorted by as, then ae, with the highest
-   scoring guys first
+   scoring guys first and then lower scoring guys
 */
-void sort_fsdb( FSDB fsdb ) ;
+  void sort_fsdb( FSDB fsdb ) ;
+  void sort_fsdb_qscore( FSDB fsdb );
 
 
 /* find_fsdb_score_cut
@@ -70,15 +74,36 @@ void sort_fsdb( FSDB fsdb ) ;
    length of the sequence. This can then be used to determine
    what is an inappropriately scoring (for its length) alignment.
 */
-void find_fsdb_score_cut( FSDB fsdb, double* slope, double* intercept ) ;
+  void find_fsdb_score_cut( FSDB fsdb, double* slope, double* intercept ) ;
+  
+/* write_fastq
+   Args: (1) char* fn
+         (2) FSDB fsdb
+   Returns: void
+   Writes a fastq database of sequences to the filename given of all
+   sequences and quality scores in the fsdb
+*/
+  void write_fastq( char* fn, FSDB fsdb );
+
+
 /* set_uniq_in_fsdb
    Args: (1) FSDB fsdb - has fss field SORTED!
+         (2) int just_outer_coords - boolean; TRUE means just use
+	     outer coordinate info (strand, start, end) to
+	     decide about uniqueness; FALSE is a more complex
+	     scheme. If a sequence is has the same start, but a
+	     lower end point, it is not unique unless it is also
+	     trimmed. This is to handle 454 data where occassionally
+	     sequences "end" because of some filter, but not the
+	     natural end of the molecule. Then, repeats can show up
+	     in different lengths!
    Returns: void
    Goes through each sequence and the sets the unique_best flag
    to true for the first of each kind (same as, ae, and rc) and
    sets unique_best to false for all others
 */
-void set_uniq_in_fsdb( FSDB fsdb ) ;
+
+  void set_uniq_in_fsdb( FSDB fsdb, const int just_outer_coords ) ;
 
 /* pop_smp_from_FSDB
    Args: (1) FSDB fsdb with valid data

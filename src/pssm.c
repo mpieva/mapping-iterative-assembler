@@ -100,19 +100,20 @@ PSSMP init_flatsubmat(void) {
     flatsubmat->depth = PSSM_DEPTH;
 
     for (cur_pos = 0; cur_pos <= (2 * PSSM_DEPTH); cur_pos++) {
-        for (base = 0; base <= 4; base++) {
-            for (other_base = 0; other_base <= 3; other_base++) {
-                if (base == other_base) {
-                    flatsubmat->sm[cur_pos][base][other_base]
-                            = FLAT_MATCH;
-                } else {
-                    flatsubmat->sm[cur_pos][base][other_base]
-                            = FLAT_MISMATCH;
-                }
-            }
-            // last column is for N
-            flatsubmat->sm[cur_pos][base][other_base] = N_SCORE;
-        }
+      for (base = 0; base <= 4; base++) {
+	for (other_base = 0; other_base <= 3; other_base++) {
+	  if (base == other_base) {
+	    flatsubmat->sm[cur_pos][base][other_base]
+	      = FLAT_MATCH;
+	  } 
+	  else {
+	    flatsubmat->sm[cur_pos][base][other_base]
+	      = FLAT_MISMATCH;
+	  }
+	}
+	// last column is for N
+	flatsubmat->sm[cur_pos][base][4] = N_SCORE;
+      }
     }
 
     return flatsubmat;

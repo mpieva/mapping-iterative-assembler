@@ -1,5 +1,5 @@
-#ifndef INCLUDED_IMA_H
-#define INCLUDED_IMA_H
+#ifndef INCLUDED_mia_H
+#define INCLUDED_mia_H
 
 #include "map_align.h"
 #include "io.h"
@@ -8,6 +8,18 @@
 #include "pssm.h"
 #include "kmer.h"
 #include "assert.h"
+#include "params.h"
+
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#else
+#define PACKAGE_BUGREPORT "green@eva.mpg.de"
+#define PACKAGE_NAME "MIA"
+#define PACKAGE_VERSION "1.0"
+#endif
+
+
 
 
 
@@ -23,6 +35,17 @@
    one if they are unique, which is determined elsewhere
 */
 MapAlignmentP init_culled_map_alignment( MapAlignmentP src_maln ) ;
+
+/* find_alignable_len
+   Args: (1) FragSeqP fs - with value info in as, ae and seq_len fields
+         (2) RefSeqP ref - with valid info in the sequence
+   Returns: int with the alignable sequence length of this sequence
+   in this FragSeqP. That is defined as the length of this sequence minus
+   any part that overlaps positions that are "N" in the RefSeq. This
+   number is not allowed to be less that MIN_ALIGNABLE_LEN to avoid
+   having sequence with very little or no alignable sequence.
+*/
+int find_alignable_len( FragSeqP fs, RefSeqP ref );
 
 /* cull_maln_from_fsdb
    Args: (1) MapAlignmentP culled_maln - maln with enough room to put the
@@ -107,6 +130,8 @@ void dyn_prog( AlignmentP a ) ;
 */
 AlignmentP init_alignment( int size1, int size2,
 			   int rc, int hp_special ) ;
+
+void free_alignment( AlignmentP al ) ;
 
 /* pop_s1c_in_a
    Args: (1) AlignmentP a - has a->seq1 and a->len1 set to
