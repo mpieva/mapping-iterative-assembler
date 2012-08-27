@@ -23,3 +23,15 @@ positions in the called consensus where it differs from a panel of known
 human mitochondria, then classifies each read as either belonging to the
 sample or a putative contaminant.
 
+
+Installation Instructions
+=========================
+
+If you get MIA from the Git repository, you will need the usual build
+environment (Gcc, Make, ...) and GNU Autotools (autoconf and automake).
+Installation should work like this:
+
+    sh bootstrap.sh
+    ./configure
+    make
+    make install
