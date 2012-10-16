@@ -1,3 +1,4 @@
+#include <deque>
 #include <map>
 #include <string>
 #include <utility>
@@ -17,20 +18,27 @@ extern "C" {
 /*
  * Contamination Checker.  Outline:
  *
- * - read the human reference; this will contain ambiguity codes
+ * - read the human reference (concsensus of contaminants); this will
+ *   contain ambiguity codes
  * - read maln file, including assembly and assembled reads
- * - align reference-consensus and assembly globally
+ * - align contaminant-consensus and assembly globally
  *   This uses Myers' O(nd) aligner, for it grasps ambiguity codes and
- *   runs fast enough for long, but similar sequences.
- * - find "diagnostic positions", positions where ass and ref differ
+ *   runs fast enough, in little memory, for long, but similar
+ *   sequences.
+ * - find "strongly diagnostic positions", positions where ass and con
+ *   are incompatible, and "weakly diagnostic positions", positions
+ *   where ass and con are not always equal
  * - for every "end" fragment: store it  and later join with its other
- *   half
- * - for every "full" fragment: if it crosses at least one diagnostic
- *   position, cut out that range from ref and align to it globally
- *   using the mia aligner
- * - for every position where the bases agree, classify it, then
- *   classify the fragment (conflicting, uninformative, contaminant,
- *   endogenous)
+ *   half to give an effectively "full" fragment
+ * - for every "full" fragment: if it crosses at least one (strongly or
+ *   weakly) diagnostic position, cut out that range from ref and align
+ *   to it globally using the mia aligner
+ * - pass 1: for every weakly diagnostic position where the bases agree,
+ *   store whether a contaminant was discovered, and if so, turn them
+ *   into "actually diagnostic positions".
+ * - pass 2: for every (strongly or actually) diagnostic position where
+ *   the bases agree, classify it, then classify the fragment
+ *   (conflicting, uninformative, contaminant, endogenous)
  * - produce a summary
  *
  * Notable features:
@@ -39,22 +47,27 @@ extern "C" {
  * - has sensible commandline and doesn't make too much noise in operation
  * - optionally considers only certain diagnostic positions
  *   (tranversions only and/or some region only)
+ * - new consensus sequence has other letters besides N  
  *
  * To be done:
+ * - find the weakly diagnostic positions
+ * - implement the second pass
+ *
+ * - get the memory used for maln files free()d again
+ *   [f'ing hard, hence postponed]
+ *
  * - read multiple maln files if desired and sum up statistics
  *   [not needed right now and postponed]
+ *
  * - filter out some diagnostic positions depending on shape of sequence id
  *   [not needed right now and postponed]
+ *
  * - filter out some differences as not being diagnostic (esp. near
  *   homopolymers; see existing contamination checker)
  *   [low priority for now and postponed]
  *
- * Nice to have:
- * - check if small/capital letters and all ambiguity codes work
- *   everywhere sensibly, then make use of them
- * - somehow account for sequencing error, especially on Solexa, when
- *   calculating the likely contamination level
  * - remove linear scans where binary search methods would work
+ *   [it's not too slow right now]
  */
 
 void print_aln( const char* aln1, const char* aln2 )
@@ -78,18 +91,22 @@ void print_aln( const char* aln1, const char* aln2 )
 // List of diagnostic positions: Coordinates are relative to assembly
 // (we want to quickly know whether a fragment overlaps a DP).  We'll
 // store the reference bases along with it.
-typedef std::map< int, std::pair< char, char > > dp_list ;
+struct Dp { char first, second, strong ; } ;
+typedef std::map< int, Dp > dp_list ;
 
-// Everything that differs counts as diagnostic, unless it's a gap.  In
-// principle, Ns could be diagnostic, too, even though in only one
-// direction.  In practice, however, it turned out that Ns produce noise
-// and little in the way of useable results.  So Ns don't count as
-// diagnostic for now.
-bool is_diagnostic( const char* aln1, const char* aln2 )
+// Everything that admits no overlap is strongly diagnostic, unless it's
+// a gap.  Note that this implies a difference and that Ns cannot be
+// diagnostic, since they overlap with everything.
+bool is_strongly_diagnostic( char aln1, char aln2 )
 {
-	return *aln1 != *aln2
-				&& *aln1 != 'N' && *aln2 != 'N' 
-				&& *aln1 != '-' && *aln2 != '-' ;
+	return aln1 != '-' && aln2 != '-' && !compatible( aln1, aln2 ) ;
+}
+
+// Everything that differs is weakly diagnostic, unless it's a gap.
+// Note that this mean that Ns are usually weakly diagnostic.
+bool is_weakly_diagnostic( char aln1, char aln2 )
+{
+	return aln1 != '-' && aln2 != '-' && toupper(aln1) != toupper(aln2) ;
 }
 
 bool is_transversion( char a, char b )
@@ -108,11 +125,10 @@ bool is_transversion( char a, char b )
 }
 
 
-dp_list mk_dp_list( const char* aln1, const char* aln2, bool transversions, int span_from, int span_to, int& total_d )
+dp_list mk_dp_list( const char* aln1, const char* aln2, int span_from, int span_to )
 {
 	dp_list l ;
     int index = 0 ;
-    total_d = 0 ;
     while( index != span_from && *aln1 && *aln2 )
     {
 		if( *aln2 != '-' ) ++index ;
@@ -121,9 +137,11 @@ dp_list mk_dp_list( const char* aln1, const char* aln2, bool transversions, int 
     }
 	while( index != span_to && *aln1 && *aln2 )
 	{
-        if( *aln1 != *aln2 && *aln1 != '-' && *aln2 != '-' ) ++total_d ;
-		if( is_diagnostic( aln1, aln2 ) && ( !transversions || is_transversion( *aln1, *aln2 )))
-			l[index] = std::make_pair( *aln1, *aln2 ) ;
+		if( is_weakly_diagnostic( *aln1, *aln2 ) ) {
+            l[index].first = *aln1 ;
+            l[index].second = *aln2 ;
+            l[index].strong = is_strongly_diagnostic( *aln1, *aln2 ) ? 2 : 0 ;
+        }
 		if( *aln2 != '-' ) ++index ;
 		++aln1 ;
 		++aln2 ;
@@ -155,30 +173,9 @@ std::string lift_over( const char* aln1, const char* aln2, int s, int e )
  
 bool consistent( bool adna, char x, char y )
 {
-	char x_ = x == 'G' ? 'R' : x == 'C' ? 'Y' : x ;
+	char x_ = x == 'G' ? 'R' : x == 'C' ? 'Y' :
+	          x == 'g' ? 'r' : x == 'c' ? 'y' : x ;
 	return x == '-' || y == '-' || (char_to_bitmap( adna ? x_ : x ) & char_to_bitmap(y)) != 0 ;
-}
-
-bool check_perfect_match_1( bool adna, const std::string& ass, const char* seq )
-{
-    std::string::const_iterator c = ass.begin(), ce = ass.end() ; 
-    while( c != ce && *seq )
-    {
-        if( *c == 'N' || *seq == 'N' ) return false ;
-        if( *c != *seq &&
-            (!adna || *c != 'C' || *seq != 'T') &&
-            (!adna || *c != 'G' || *seq != 'A') ) return false ;
-        ++c ;
-        ++seq ;
-    }
-    return( c == ce && !*seq ) ;
-}
-
-bool check_perfect_match( bool adna, const std::string& ass, const char* seq )
-{
-    bool b = check_perfect_match_1( adna, ass, seq ) ;
-    fprintf( stderr, "%s\n%s -- %s\n", ass.c_str(), seq, b ? "match" : "mismatch" ) ;
-    return b ;
 }
 
 enum whatsit { unknown, clean, dirt, conflict, nonsense, maxwhatsits } ;
@@ -197,7 +194,7 @@ whatsit merge_whatsit( whatsit a, whatsit b )
 bool sanity_check_sequence( const char* s )
 {
 	for( ; *s ; ++s )
-		if( !strchr( "ACGTUN", *s ) )
+		if( !strchr( "ACGTBDHVMKYRSWUN", toupper(*s) ) )
 			return false ;
 	return true ;
 }
@@ -231,6 +228,19 @@ std::string find_maln( std::string fn )
     closedir( d ) ;
     return fn ;
 }
+
+/* Fixup stupid naming in maln files.  Must everything be
+ * encoded in the name, dammit?! */
+void fixup_name( AlnSeqP s )
+{
+    char *p = s->id, *q = s->id ;
+    while( *q ) ++q ;
+    if( q-p > 3 && (q[-1] == 'b' || q[-1] == 'f') && q[-2] == '_' )
+    {
+        if( q[-3] == ',' ) q[-3] = 0 ; else q[-2] = 0 ;
+    }
+}
+
 
 struct option longopts[] = {
 	{ "reference", required_argument, 0, 'r' },
@@ -270,6 +280,12 @@ struct refseq hum_ref = {
 	mt311_sequence, NULL,
 	mt311_sequence_size-1, mt311_sequence_size,
 	NULL, 1, 0 } ;
+
+struct cached_pwaln {
+    int start ;
+    std::string ref_seq ;
+    std::string frag_seq ;
+} ;
 
 int main( int argc, char * const argv[] )
 {
@@ -330,24 +346,24 @@ int main( int argc, char * const argv[] )
 	} while( opt != -1 ) ;
 
 	if( optind == argc ) { usage( argv[0] ) ; return 1 ; }
-	if( !hum_ref.rcseq ) make_reverse_complement( &hum_ref ) ;
 	bool hum_ref_ok = sanity_check_sequence( hum_ref.seq ) ;
 	if( !hum_ref_ok ) fputs( "FUBAR'ed FastA file: contaminant sequence contains gap symbols.\n", stderr ) ;
 
+	if( !hum_ref.rcseq ) make_reverse_complement( &hum_ref ) ;
+
     if( mktable ) {
-        fputs( "#Filename\tAln.dist\t#diff\t#diag\t#tv\t", stdout ) ;
+        fputs( "#Filename\tAln.dist\t#diff\t#diag\t#strong\t#eff\t#tv\t", stdout ) ;
         for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
         {
             fputs( label[klass], stdout ) ;
             putchar( '\t' ) ;
         }
-        puts( "LB\tML\tUB\t#match\t#mism\tLB'\tML'\tUB'" ) ;
+        puts( "LB\tML\tUB" /* \t#match\t#mism\tLB'\tML'\tUB'" */ ) ;
     }
 
     for( ; optind != argc ; ++optind )
     {
         int summary[ maxwhatsits ] = {0} ;
-        int matched = 0, mismatched = 0 ;
 
         std::string infile( be_clever ? find_maln( argv[optind] ) : argv[optind] ) ;
         if( mktable ) {
@@ -385,21 +401,20 @@ int main( int argc, char * const argv[] )
 
         if( verbose >= 6 ) print_aln( aln_con, aln_ass ) ;
 
-        int total_dist ;
-        dp_list l = mk_dp_list( aln_con, aln_ass, transversions, span_from, span_to, total_dist ) ;
-        if( mktable ) printf( "%d\t", total_dist ) ;
-        else printf( "  %d total differences between reference and assembly.\n", total_dist ) ;
+        dp_list l = mk_dp_list( aln_con, aln_ass, span_from, span_to ) ;
+        if( mktable ) printf( "%u\t", (unsigned)l.size() ) ;
+        else printf( "  %u total differences between reference and assembly.\n", (unsigned)l.size() ) ;
 
         {
-            int t = 0 ;
+            int s = 0 ;
             for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
-                if( is_transversion( i->second.first, i->second.second ) ) ++t ;
-            if( mktable ) printf( "%d\t%d\t", (int)l.size(), t ) ; 
+                if( i->second.strong ) ++s ;
+            if( mktable ) printf( "%d\t%d\t", (int)l.size(), s ) ; 
             else {
                 printf( "  %d diagnostic positions", (int)l.size() ) ;
                 if( span_from != 0 || span_to != INT_MAX )
                     printf( " in range [%d,%d)", span_from, span_to ) ;
-                printf( ", %d of which are transversions.\n\n", t ) ;
+                printf( ", %d of which are strongly diagnostic.\n", s ) ;
             }
         }
         if( verbose >= 3 ) 
@@ -410,38 +425,209 @@ int main( int argc, char * const argv[] )
             putc( '\n', stderr ) ;
         }
 
-        typedef std::map< std::string, std::pair< std::pair< whatsit, int >, bool > > Bfrags ;
+        typedef std::map< std::string, std::pair< whatsit, int > > Bfrags ;
         Bfrags bfrags ;
-        const AlnSeqP *s ;
+        std::deque< cached_pwaln > cached_pwalns ;
 
-        for( s = maln->AlnSeqArray ; s != maln->AlnSeqArray + maln->num_aln_seqs ; ++s )
+        if( verbose >= 2 ) fputs( "Pass one: finding actually diagnostic positions.\n", stderr ) ;
+        for( const AlnSeqP *s = maln->AlnSeqArray ; s != maln->AlnSeqArray + maln->num_aln_seqs ; ++s )
         {
-            /* Fixup stupid naming in maln files.  Must everything be
-             * encoded in the name, dammit?! */
-            {
-                char *p = (*s)->id, *q = (*s)->id ;
-                while( *q ) ++q ;
-                if( q-p > 3 && (q[-1] == 'b' || q[-1] == 'f') && q[-2] == '_' )
-                {
-                    if( q[-3] == ',' ) q[-3] = 0 ; else q[-2] = 0 ;
-                }
-            }
-
-            whatsit klass = unknown ;
-            int votes = 0 ;
+            fixup_name( *s ) ;
 
             std::string the_ass( maln->ref->seq + (*s)->start, (*s)->end - (*s)->start + 1 ) ;
-            bool is_perfect_match = verbose >= 5 ? check_perfect_match( adna, the_ass, (*s)->seq )
-                                                 : check_perfect_match_1( adna, the_ass, (*s)->seq ) ;
             if( verbose >= 3 ) {
                 fputs( (*s)->id, stderr ) ;
                 putc( '/', stderr ) ;
                 putc( (*s)->segment, stderr ) ;
-                if( is_perfect_match ) fputs( ": perfect match\n", stderr ) ;
-                else fputs( ": contains mismatches\n", stderr ) ;
             }
 
+            // are we overlapping anything at all?
+            std::pair< dp_list::const_iterator, dp_list::const_iterator > p =
+                overlapped_diagnostic_positions( l, *s ) ;
 
+            if( verbose >= 3 )
+            {
+                fprintf( stderr, "%s/%c: %d potentially diagnostic positions",
+                         (*s)->id, (*s)->segment, (int)std::distance( p.first, p.second ) ) ;
+                if( verbose >= 4 ) 
+                {
+                    putc( ':', stderr ) ; putc( ' ', stderr ) ;
+                    dp_list::const_iterator i = p.first ;
+                    if( i != p.second ) { fprintf( stderr, "<%d:%c,%c>", i->first, i->second.first, i->second.second ) ; ++i ; }
+                    for( ; i != p.second ; ++i ) fprintf( stderr, ", <%d:%c,%c>", i->first, i->second.first, i->second.second ) ;
+                }
+                fprintf( stderr, "\nrange:  %d..%d\n", (*s)->start, (*s)->end ) ;
+            }
+
+            // reconstruct read and reference sequences, align them
+            std::string the_read ;
+            for( char *nt = (*s)->seq, **ins = (*s)->ins ; *nt ; ++nt, ++ins )
+            {
+                if( *nt != '-' ) the_read.push_back( *nt ) ;
+                if( *ins ) the_read.append( *ins ) ;
+            }
+            std::string lifted = lift_over( aln_con, aln_ass, (*s)->start, (*s)->end + 1 ) ;
+
+            if( verbose >= 5 )
+            {
+                fprintf( stderr, "raw read: %s\nlifted:   %s\nassembly: %s\n\n"
+                        "aln.read: %s\naln.assm: %s\nmatches:  ",
+                        the_read.c_str(), lifted.c_str(), the_ass.c_str(), 
+                        (*s)->seq, the_ass.c_str() ) ;
+                std::string::const_iterator b = the_ass.begin(), e = the_ass.end() ;
+                const char* pc = (*s)->seq ;
+                while( b != e && *pc ) putc( *b++ == *pc++ ? '*' : ' ', stderr ) ;
+                putc( '\n', stderr ) ;
+            }
+
+            int size = std::max( lifted.size(), the_read.size() ) ;
+
+            AlignmentP frag_aln = init_alignment( size, size, 0, 0 ) ;
+
+            std::string ref_for_mia = lifted ;
+            for( size_t i = 0 ; i != ref_for_mia.length() ; ++i )
+            {
+                switch (toupper(ref_for_mia[i]))
+                {
+                    case 'A':
+                    case 'C':
+                    case 'G':
+                    case 'T':
+                        ref_for_mia[i] = toupper( ref_for_mia[i] ) ;
+                        break ;
+                    default:
+                        ref_for_mia[i] = 'N' ;
+                }
+            }
+        
+            frag_aln->seq1 = ref_for_mia.c_str() ;
+            frag_aln->seq2 = the_read.c_str() ;
+            frag_aln->len1 = size ;
+            frag_aln->len2 = size ;
+            frag_aln->sg5 = 1 ;
+            frag_aln->sg3 = 1 ;
+            frag_aln->submat = submat ;
+            pop_s1c_in_a( frag_aln ) ;
+            pop_s2c_in_a( frag_aln ) ;
+            dyn_prog( frag_aln ) ;
+
+            pw_aln_frag pwaln ;
+            max_sg_score( frag_aln ) ;			// ARGH!  This has a vital side-effect!!!
+            find_align_begin( frag_aln ) ;  	//        And so has this...
+            populate_pwaln_to_begin( frag_aln, &pwaln ) ;
+            pwaln.start = frag_aln->abc;
+
+            char *paln1 = aln_con, *paln2 = aln_ass ;
+            int ass_pos = 0 ;
+            while( ass_pos != (*s)->start && *paln1 && *paln2 ) 
+            {
+                if( *paln2 != '-' ) ass_pos++ ;
+                ++paln1 ;
+                ++paln2 ;
+            }
+
+            cached_pwalns.push_back( cached_pwaln() ) ;
+            cached_pwalns.back().start = pwaln.start ;
+            cached_pwalns.back().ref_seq = pwaln.ref_seq ;
+            cached_pwalns.back().frag_seq = pwaln.frag_seq ;
+
+            std::string in_ref = lifted.substr( 0, pwaln.start ) ;
+            in_ref.append( pwaln.ref_seq ) ;
+
+            char *in_frag_v_ref = pwaln.frag_seq ;
+            char *in_ass = maln->ref->seq + (*s)->start ;
+            char *in_frag_v_ass = (*s)->seq ;
+
+            if( verbose ) {
+                if(*paln1!=in_ref[0]||*paln1=='-') fprintf( stderr, "huh? (R+%d) %.10s %.10s\n", pwaln.start, paln1, in_ref.c_str() ) ;
+                if(*paln2!=in_ass[0]&&*paln2!='-') fprintf( stderr, "huh? (A+%d) %.10s %.10s\n", pwaln.start, paln2, in_ass ) ;
+            }
+
+            // iterate over alignment.  if we see something diagnosable
+            // as contaminant, we mark that position as strong.
+            while( ass_pos != (*s)->end +1 && *paln1 && *paln2 && !in_ref.empty() && *in_ass && *in_frag_v_ass && *in_frag_v_ref )
+            {
+                if( is_weakly_diagnostic( *paln1, *paln2 ) ) {
+                    if( verbose >= 4 )
+                        fprintf( stderr, "diagnostic pos.: %d %c/%c %c/%c",
+                                ass_pos, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                    if( *in_frag_v_ref != *in_frag_v_ass ) 
+                    {
+                        if( verbose >= 4 ) fputs( "in disagreement.\n", stderr ) ;
+                    }
+                    else
+                    {
+                        bool maybe_clean = consistent( adna, *in_ass, *in_frag_v_ass ) ;
+                        bool maybe_dirt =  consistent( adna, in_ref[0], *in_frag_v_ref ) ;
+
+                        if( !maybe_clean && maybe_dirt ) {
+                            dp_list::iterator iter = l.find( ass_pos ) ;
+                            if( iter == l.end() ) {
+                                fprintf( stderr, "diagnostic site not found: %d\n", ass_pos ) ;
+                            } else if( !iter->second.strong ) {
+                                if( verbose >= 4 )
+                                    fprintf( stderr, "possible contaminant found at %d, upgraded to strong.\n", iter->first ) ;
+                                iter->second.strong = 1 ;
+                            }
+                        }
+                    }
+                }
+
+                if( *paln1 != '-' ) {
+                    do {
+                        in_ref=in_ref.substr(1) ;
+                        in_frag_v_ref++ ;
+                    } while( in_ref[0] == '-' ) ;
+                }
+                if( *paln2 != '-' ) {
+                    ass_pos++ ;
+                    do {
+                        in_ass++ ;
+                        in_frag_v_ass++ ;
+                    } while( *in_ass == '-' ) ;
+                }
+                ++paln1 ;
+                ++paln2 ;
+            }
+
+            free_alignment( frag_aln ) ;
+        }
+
+        for( dp_list::iterator i = l.begin(), j = l.end() ; i != j ; )
+        {
+            dp_list::iterator k = i ;
+            k++ ;
+            if( !i->second.strong ) l.erase( i ) ;
+            i=k ;
+        }
+        {
+            int t = 0 ;
+            for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
+                if( is_transversion( i->second.first, i->second.second ) ) ++t ;
+            if( mktable ) printf( "%d\t%d\t", (int)l.size(), t ) ; 
+            else {
+                printf( "  %d effectively diagnostic positions", (int)l.size() ) ;
+                if( span_from != 0 || span_to != INT_MAX )
+                    printf( " in range [%d,%d)", span_from, span_to ) ;
+                printf( ", %d of which are transversions.\n\n", t ) ;
+            }
+        }
+
+        if( verbose >= 2 ) fputs( "Pass two: classifying fragments.\n", stderr ) ;
+        std::deque< cached_pwaln >::const_iterator cpwaln = cached_pwalns.begin() ;
+        for( const AlnSeqP *s = maln->AlnSeqArray ; s != maln->AlnSeqArray + maln->num_aln_seqs ; ++s, ++cpwaln )
+        {
+            whatsit klass = unknown ;
+            int votes = 0 ;
+
+            std::string the_ass( maln->ref->seq + (*s)->start, (*s)->end - (*s)->start + 1 ) ;
+            if( verbose >= 3 ) {
+                fputs( (*s)->id, stderr ) ;
+                putc( '/', stderr ) ;
+                putc( (*s)->segment, stderr ) ;
+            }
+
+            // enough overlap?  (we only have _actually_ diagnostic positions now)
             std::pair< dp_list::const_iterator, dp_list::const_iterator > p =
                 overlapped_diagnostic_positions( l, *s ) ;
             if( std::distance( p.first, p.second ) < min_diag_posns )
@@ -468,58 +654,8 @@ int main( int argc, char * const argv[] )
                     fprintf( stderr, "\nrange:  %d..%d\n", (*s)->start, (*s)->end ) ;
                 }
 
-                std::string the_read ;
-                for( char *nt = (*s)->seq, **ins = (*s)->ins ; *nt ; ++nt, ++ins )
-                {
-                    if( *nt != '-' ) the_read.push_back( *nt ) ;
-                    if( *ins ) the_read.append( *ins ) ;
-                }
-                std::string lifted = lift_over( aln_con, aln_ass, (*s)->start, (*s)->end + 1 ) ;
-
-                if( verbose >= 5 )
-                {
-                    fprintf( stderr, "raw read: %s\nlifted:   %s\nassembly: %s\n\n"
-                                     "aln.read: %s\naln.assm: %s\nmatches:  ",
-                                     the_read.c_str(), lifted.c_str(), the_ass.c_str(), 
-                                     (*s)->seq, the_ass.c_str() ) ;
-                    std::string::const_iterator b = the_ass.begin(), e = the_ass.end() ;
-                    const char* pc = (*s)->seq ;
-                    while( b != e && *pc ) putc( *b++ == *pc++ ? '*' : ' ', stderr ) ;
-                    putc( '\n', stderr ) ;
-                }
-
-                int size = std::max( lifted.size(), the_read.size() ) ;
-
-                AlignmentP frag_aln = init_alignment( size, size, 0, 0 ) ;
-
-                frag_aln->seq1 = lifted.c_str() ;
-                frag_aln->seq2 = the_read.c_str() ;
-                frag_aln->len1 = size ;
-                frag_aln->len2 = size ;
-                frag_aln->sg5 = 1 ;
-                frag_aln->sg3 = 1 ;
-                frag_aln->submat = submat ;
-                pop_s1c_in_a( frag_aln ) ;
-                pop_s2c_in_a( frag_aln ) ;
-                dyn_prog( frag_aln ) ;
-
-                pw_aln_frag pwaln ;
-                max_sg_score( frag_aln ) ;			// ARGH!  This has a vital side-effect!!!
-                find_align_begin( frag_aln ) ;  	//        And so has this...
-                populate_pwaln_to_begin( frag_aln, &pwaln ) ;
-                pwaln.start = frag_aln->abc;
-
-                if( verbose >= 5 )
-                {
-                    fprintf( stderr, "\naln.read: %s\naln.ref:  %s\nmatches:  ", pwaln.frag_seq, pwaln.ref_seq ) ;
-                    const char *pc = pwaln.frag_seq, *pd = pwaln.ref_seq ;
-                    while( *pc && *pd ) putc( *pd++ == *pc++ ? '*' : ' ', stderr ) ;
-                    putc( '\n', stderr ) ;
-                    putc( '\n', stderr ) ;
-                }
-
-                free_alignment( frag_aln ) ;
-
+                // Hmm, all this iterator business is somewhat
+                // lacking...
                 char *paln1 = aln_con, *paln2 = aln_ass ;
                 int ass_pos = 0 ;
                 while( ass_pos != (*s)->start && *paln1 && *paln2 ) 
@@ -529,47 +665,47 @@ int main( int argc, char * const argv[] )
                     ++paln2 ;
                 }
 
-                std::string in_ref = lifted.substr( 0, pwaln.start ) ;
-                in_ref.append( pwaln.ref_seq ) ;
-
-                char *in_frag_v_ref = pwaln.frag_seq ;
                 char *in_ass = maln->ref->seq + (*s)->start ;
                 char *in_frag_v_ass = (*s)->seq ;
+                std::string::const_iterator in_frag_v_ref = cpwaln->frag_seq.begin() ;
 
-                if( verbose ) {
-                    if(*paln1!=in_ref[0]||*paln1=='-') fprintf( stderr, "huh? (R+%d) %.10s %.10s\n", pwaln.start, paln1, in_ref.c_str() ) ;
-                    if(*paln2!=in_ass[0]&&*paln2!='-') fprintf( stderr, "huh? (A+%d) %.10s %.10s\n", pwaln.start, paln2, in_ass ) ;
-                }
+                std::string lifted = lift_over( aln_con, aln_ass, (*s)->start, (*s)->end + 1 ) ;
+                std::string in_ref = lifted.substr( 0, cpwaln->start ) ;
+                in_ref.append( cpwaln->ref_seq ) ;
 
                 while( ass_pos != (*s)->end +1 && *paln1 && *paln2 && !in_ref.empty() && *in_ass && *in_frag_v_ass && *in_frag_v_ref )
                 {
-                    if( is_diagnostic( paln1, paln2 ) ) {
-                        if( verbose >= 4 )
-                            fprintf( stderr, "diagnostic pos.: %d %c/%c %c/%c",
-                                     ass_pos, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
-                        if( *in_frag_v_ref != *in_frag_v_ass ) 
-                        {
-                            if( verbose >= 4 ) fputs( "in disagreement.\n", stderr ) ;
-                        }
-                        else
-                        {
-                            bool maybe_clean = consistent( adna, *in_ass, *in_frag_v_ass ) ;
-                            bool maybe_dirt =  consistent( adna, in_ref[0], *in_frag_v_ref ) ;
-
+                    // oops, lookup in table is absolutely needed.
+                    if( is_weakly_diagnostic( *paln1, *paln2 ) ) {
+                        dp_list::const_iterator iter = l.find( ass_pos ) ;
+                        if( iter != l.end() ) {
                             if( verbose >= 4 )
+                                fprintf( stderr, "diagnostic pos.: %d %c/%c %c/%c",
+                                        ass_pos, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                            if( *in_frag_v_ref != *in_frag_v_ass ) 
                             {
-                                fputs( maybe_dirt  ? "" : "in", stderr ) ;
-                                fputs( " consistent/", stderr ) ;
-                                fputs( maybe_clean ? "" : "in", stderr ) ;
-                                fputs( " consistent\n", stderr ) ; 
+                                if( verbose >= 4 ) fputs( "in disagreement.\n", stderr ) ;
                             }
+                            else
+                            {
+                                bool maybe_clean = consistent( adna, *in_ass, *in_frag_v_ass ) ;
+                                bool maybe_dirt =  consistent( adna, in_ref[0], *in_frag_v_ref ) ;
 
-                            if( maybe_clean && !maybe_dirt && klass == unknown ) klass = clean ;
-                            if( maybe_clean && !maybe_dirt && klass == dirt    ) klass = conflict ;
-                            if( !maybe_clean && maybe_dirt && klass == unknown ) klass = dirt ;
-                            if( !maybe_clean && maybe_dirt && klass == clean   ) klass = conflict ;
-                            if( !maybe_clean && !maybe_dirt )                    klass = nonsense ;
-                            if( maybe_dirt != maybe_clean ) votes++ ;
+                                if( verbose >= 4 )
+                                {
+                                    fputs( maybe_dirt  ? "" : "in", stderr ) ;
+                                    fputs( " consistent/", stderr ) ;
+                                    fputs( maybe_clean ? "" : "in", stderr ) ;
+                                    fputs( " consistent\n", stderr ) ; 
+                                }
+
+                                if( maybe_clean && !maybe_dirt && klass == unknown ) klass = clean ;
+                                if( maybe_clean && !maybe_dirt && klass == dirt    ) klass = conflict ;
+                                if( !maybe_clean && maybe_dirt && klass == unknown ) klass = dirt ;
+                                if( !maybe_clean && maybe_dirt && klass == clean   ) klass = conflict ;
+                                if( !maybe_clean && !maybe_dirt )                    klass = nonsense ;
+                                if( maybe_dirt != maybe_clean ) votes++ ;
+                            }
                         }
                     }
 
@@ -597,7 +733,7 @@ int main( int argc, char * const argv[] )
             switch( (*s)->segment )
             {
                 case 'b':
-                    bfrags[ (*s)->id ] = std::make_pair( std::make_pair( klass, votes ), is_perfect_match ) ;
+                    bfrags[ (*s)->id ] = std::make_pair( klass, votes ) ;
                     if( verbose >= 3 ) putc( '\n', stderr ) ;
                     break ;
 
@@ -609,16 +745,14 @@ int main( int argc, char * const argv[] )
                     }
                     else
                     {
-                        votes += i->second.first.second ;
-                        klass = merge_whatsit( klass, i->second.first.first ) ;
-                        is_perfect_match = is_perfect_match && i->second.second ;
+                        votes += i->second.second ;
+                        klass = merge_whatsit( klass, i->second.first ) ;
                     }
 
                 case 'a':
                     if( verbose >= 2 ) fprintf( stderr, "%s is %s (%d votes)\n", (*s)->id, label[klass], votes ) ;
                     if( verbose >= 3 ) putc( '\n', stderr ) ;
                     summary[klass]++ ;
-                    if( is_perfect_match ) ++matched ; else ++mismatched ;
                     break ;
 
                 default:
@@ -653,22 +787,6 @@ int main( int argc, char * const argv[] )
                 }
             }
             if( mktable ) printf( "%.1f\t%.1f\t%.1f\t", lb, ml, ub ) ;
-        }
-        { 
-            double z = 1.96 ; // this is Z_{0.975}, giving a 95% confidence interval (I hope...)
-            double k = mismatched, n = k + matched ;
-            double p_ = k / n ;
-            double c = p_ + 0.5 * z * z / n ;
-            double w = z * sqrt( p_ * (1-p_) / n + 0.25 * z * z / (n*n) ) ;
-            double d = 1 + z * z / n ;
-            double lb = 100.0 * (c-w) / d ;
-            double ml = 100.0 * p_ ;
-            double ub = 100.0 * (c+w) / d ;
-
-            if( mktable ) printf( "%d\t%d\t%.1f\t%.1f\t%.1f\n", matched, mismatched, lb, ml, ub ) ;
-            else printf( "\n  perfectly aligned fragments: %d"
-                         "\n  fragments with differences:  %d (%.1f .. %.1f .. %.1f%%)\n\n",
-                         matched, mismatched, lb, ml, ub ) ;
         }
         free_map_alignment( maln ) ;
         free( aln_con ) ;

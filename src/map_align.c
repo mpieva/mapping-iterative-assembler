@@ -413,46 +413,17 @@ int alnSeqCmp(const void* as1_, const void* as2_) {
 	return 0;
 }
 
-
 char revcom_char(const char base) {
-  switch (base) {
-  case 'A':
-    return 'T';
-  case 'a' :
-    return 't';
+    char tbl[] = "TVGH\0\0CD\0\0M\0KN\0\0\0YSAABWXR\0" ;
+    char rc = 0 ;
+    if( 'A' <= base && base <= 'Z' )
+        rc = tbl[ base - 'A' ] ;
+    else if( 'a' <= base && base <= 'z' )
+        rc = tbl[ base - 'a' ] + 32 ;
 
-  case 'C':
-    return 'G';
-  case 'c' :
-    return 'g';
-
-  case 'G':
-    return 'C';
-  case 'g' :
-    return 'c';
-    
-  case 'T':
-    return 'A';
-  case 't' :
-    return 'a';
-
-  case '-':
-    return '-';
-    
-  case 'N':
-    return 'N';
-  case 'n':
-    return 'n';
-
-  case 'X':
-    return 'X';
-  case 'x':
-    return 'x';
-    
-  default:
+    if( rc ) return rc ;
     fprintf( stderr, "Do not know how to revcom \"%c\"\n", base);
     return 'N';
-  }
 }
 
 /* Takes a MapAlignmentP and a position where some of

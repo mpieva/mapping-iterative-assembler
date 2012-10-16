@@ -63,7 +63,9 @@ inline int char_to_bitmap( char x )
         default: return 0 ;
     }
 }
-                  
+
+inline int compatible( char x, char y ) { return (char_to_bitmap(x) & char_to_bitmap(y)) != 0 ; }
+
 inline int min( int a, int b ) { return a < b ? a : b ; }
 inline int max( int a, int b ) { return a < b ? b : a ; }
 inline int max3( int a, int b, int c ) { return a < b ? max( b, c ) : max( a, c ) ; }
