@@ -287,6 +287,44 @@ struct cached_pwaln {
     std::string frag_seq ;
 } ;
 
+void update_class( whatsit &klass, bool maybe_clean, bool maybe_dirt )
+{
+    if( maybe_clean && !maybe_dirt && klass == unknown ) klass = clean ;
+    if( maybe_clean && !maybe_dirt && klass == dirt    ) klass = conflict ;
+    if( !maybe_clean && maybe_dirt && klass == unknown ) klass = dirt ;
+    if( !maybe_clean && maybe_dirt && klass == clean   ) klass = conflict ;
+    if( !maybe_clean && !maybe_dirt )                    klass = nonsense ;
+}
+
+void print_results( int *summary, bool mktable )
+{
+    double z = 1.96 ; // this is Z_{0.975}, giving a 95% confidence interval (I hope...)
+    double k = summary[dirt], n = k + summary[clean] ;
+    double p_ = k / n ;
+    double c = p_ + 0.5 * z * z / n ;
+    double w = z * sqrt( p_ * (1-p_) / n + 0.25 * z * z / (n*n) ) ;
+    double d = 1 + z * z / n ;
+    double lb = 100.0 * (c-w) / d ;         	// lower bound of CI
+    double ml = 100.0 * p_ ;         			// ML estimate
+    double ub = 100.0 * (c+w) / d ;      		// upper bound of CI
+
+    for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
+    {
+        if( mktable ) {
+            printf( "%d\t", summary[klass] ) ;
+        } else {
+            printf( "  %s fragments: %d", label[klass], summary[klass] ) ;
+            if( klass == dirt )
+            {
+                printf( " (%.1f .. %.1f .. %.1f%%)", lb, ml, ub ) ;
+            }
+            putchar( '\n' ) ;
+        }
+    }
+    if( mktable ) printf( "%.1f\t%.1f\t%.1f\t", lb, ml, ub ) ;
+    else putchar( '\n' ) ;
+}
+
 int main( int argc, char * const argv[] )
 {
 	bool adna = false ;
@@ -364,6 +402,7 @@ int main( int argc, char * const argv[] )
     for( ; optind != argc ; ++optind )
     {
         int summary[ maxwhatsits ] = {0} ;
+        int summary2[ maxwhatsits ] = {0} ;
 
         std::string infile( be_clever ? find_maln( argv[optind] ) : argv[optind] ) ;
         if( mktable ) {
@@ -426,7 +465,7 @@ int main( int argc, char * const argv[] )
         }
 
         typedef std::map< std::string, std::pair< whatsit, int > > Bfrags ;
-        Bfrags bfrags ;
+        Bfrags bfrags, bfrags2 ;
         std::deque< cached_pwaln > cached_pwalns ;
 
         if( verbose >= 2 ) fputs( "Pass one: finding actually diagnostic positions.\n", stderr ) ;
@@ -435,19 +474,13 @@ int main( int argc, char * const argv[] )
             fixup_name( *s ) ;
 
             std::string the_ass( maln->ref->seq + (*s)->start, (*s)->end - (*s)->start + 1 ) ;
-            if( verbose >= 3 ) {
-                fputs( (*s)->id, stderr ) ;
-                putc( '/', stderr ) ;
-                putc( (*s)->segment, stderr ) ;
-            }
-
             // are we overlapping anything at all?
             std::pair< dp_list::const_iterator, dp_list::const_iterator > p =
                 overlapped_diagnostic_positions( l, *s ) ;
 
             if( verbose >= 3 )
             {
-                fprintf( stderr, "%s/%c: %d potentially diagnostic positions",
+                fprintf( stderr, "%s/%c:\n  %d potentially diagnostic positions",
                          (*s)->id, (*s)->segment, (int)std::distance( p.first, p.second ) ) ;
                 if( verbose >= 4 ) 
                 {
@@ -456,7 +489,7 @@ int main( int argc, char * const argv[] )
                     if( i != p.second ) { fprintf( stderr, "<%d:%c,%c>", i->first, i->second.first, i->second.second ) ; ++i ; }
                     for( ; i != p.second ; ++i ) fprintf( stderr, ", <%d:%c,%c>", i->first, i->second.first, i->second.second ) ;
                 }
-                fprintf( stderr, "\nrange:  %d..%d\n", (*s)->start, (*s)->end ) ;
+                fprintf( stderr, "; range:  %d..%d\n", (*s)->start, (*s)->end ) ;
             }
 
             // reconstruct read and reference sequences, align them
@@ -466,18 +499,17 @@ int main( int argc, char * const argv[] )
                 if( *nt != '-' ) the_read.push_back( *nt ) ;
                 if( *ins ) the_read.append( *ins ) ;
             }
-            std::string lifted = lift_over( aln_con, aln_ass, (*s)->start, (*s)->end + 1 ) ;
+            std::string lifted = lift_over( aln_con, aln_ass, (*s)->start, (*s)->end + 2 ) ;
 
             if( verbose >= 5 )
             {
-                fprintf( stderr, "raw read: %s\nlifted:   %s\nassembly: %s\n\n"
+                fprintf( stderr, "\nraw read: %s\nlifted:   %s\nassembly: %s\n\n"
                         "aln.read: %s\naln.assm: %s\nmatches:  ",
                         the_read.c_str(), lifted.c_str(), the_ass.c_str(), 
                         (*s)->seq, the_ass.c_str() ) ;
                 std::string::const_iterator b = the_ass.begin(), e = the_ass.end() ;
                 const char* pc = (*s)->seq ;
                 while( b != e && *pc ) putc( *b++ == *pc++ ? '*' : ' ', stderr ) ;
-                putc( '\n', stderr ) ;
             }
 
             int size = std::max( lifted.size(), the_read.size() ) ;
@@ -526,6 +558,18 @@ int main( int argc, char * const argv[] )
                 ++paln2 ;
             }
 
+            if( verbose >= 5 )
+            {
+                fprintf( stderr, "\n\naln.read: %s\naln.ref:  %s\nmatches:  ",
+                         pwaln.frag_seq, pwaln.ref_seq ) ;
+
+                const char* b = pwaln.ref_seq ;
+                const char* pc = pwaln.frag_seq ;
+                while( *b && *pc ) putc( *b++ == *pc++ ? '*' : ' ', stderr ) ;
+                putc( '\n', stderr ) ;
+                putc( '\n', stderr ) ;
+            }
+
             cached_pwalns.push_back( cached_pwaln() ) ;
             cached_pwalns.back().start = pwaln.start ;
             cached_pwalns.back().ref_seq = pwaln.ref_seq ;
@@ -548,29 +592,28 @@ int main( int argc, char * const argv[] )
             while( ass_pos != (*s)->end +1 && *paln1 && *paln2 && !in_ref.empty() && *in_ass && *in_frag_v_ass && *in_frag_v_ref )
             {
                 if( is_weakly_diagnostic( *paln1, *paln2 ) ) {
-                    if( verbose >= 4 )
-                        fprintf( stderr, "diagnostic pos.: %d %c/%c %c/%c",
-                                ass_pos, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
-                    if( *in_frag_v_ref != *in_frag_v_ass ) 
-                    {
-                        if( verbose >= 4 ) fputs( "in disagreement.\n", stderr ) ;
-                    }
-                    else
-                    {
-                        bool maybe_clean = consistent( adna, *in_ass, *in_frag_v_ass ) ;
-                        bool maybe_dirt =  consistent( adna, in_ref[0], *in_frag_v_ref ) ;
+                    dp_list::iterator iter = l.find( ass_pos ) ;
+                    if( iter == l.end() ) {
+                        fprintf( stderr, "diagnostic site not found: %d\n", ass_pos ) ;
+                    } else {
+                        if( verbose >= 4 )
+                            fprintf( stderr, "diagnostic pos.: %d %c(%c)/%c %c/%c",
+                                    ass_pos, iter->second.first, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                        if( *in_frag_v_ref != *in_frag_v_ass ) 
+                        {
+                            if( verbose >= 4 ) fputs( " in disagreement.", stderr ) ;
+                        } else {
+                            bool maybe_clean = consistent( adna, iter->second.second, *in_frag_v_ass ) ;
+                            bool maybe_dirt =  consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
 
-                        if( !maybe_clean && maybe_dirt ) {
-                            dp_list::iterator iter = l.find( ass_pos ) ;
-                            if( iter == l.end() ) {
-                                fprintf( stderr, "diagnostic site not found: %d\n", ass_pos ) ;
-                            } else if( !iter->second.strong ) {
+                            if( !maybe_clean && maybe_dirt && !iter->second.strong ) {
                                 if( verbose >= 4 )
-                                    fprintf( stderr, "possible contaminant found at %d, upgraded to strong.\n", iter->first ) ;
+                                    fputs( " possible contaminant, upgraded to strong.", stderr ) ;
                                 iter->second.strong = 1 ;
                             }
                         }
                     }
+                    if( verbose >= 4 ) putc( '\n', stderr ) ;
                 }
 
                 if( *paln1 != '-' ) {
@@ -589,6 +632,7 @@ int main( int argc, char * const argv[] )
                 ++paln1 ;
                 ++paln2 ;
             }
+            if( verbose >= 4 ) fprintf( stderr, "\n" ) ;
 
             free_alignment( frag_aln ) ;
         }
@@ -618,15 +662,10 @@ int main( int argc, char * const argv[] )
         for( const AlnSeqP *s = maln->AlnSeqArray ; s != maln->AlnSeqArray + maln->num_aln_seqs ; ++s, ++cpwaln )
         {
             whatsit klass = unknown ;
-            int votes = 0 ;
+            whatsit klass2 = unknown ;
+            int votes = 0, votes2 = 0 ;
 
             std::string the_ass( maln->ref->seq + (*s)->start, (*s)->end - (*s)->start + 1 ) ;
-            if( verbose >= 3 ) {
-                fputs( (*s)->id, stderr ) ;
-                putc( '/', stderr ) ;
-                putc( (*s)->segment, stderr ) ;
-            }
-
             // enough overlap?  (we only have _actually_ diagnostic positions now)
             std::pair< dp_list::const_iterator, dp_list::const_iterator > p =
                 overlapped_diagnostic_positions( l, *s ) ;
@@ -651,11 +690,10 @@ int main( int argc, char * const argv[] )
                         if( i != p.second ) { fprintf( stderr, "<%d:%c,%c>", i->first, i->second.first, i->second.second ) ; ++i ; }
                         for( ; i != p.second ; ++i ) fprintf( stderr, ", <%d:%c,%c>", i->first, i->second.first, i->second.second ) ;
                     }
-                    fprintf( stderr, "\nrange:  %d..%d\n", (*s)->start, (*s)->end ) ;
+                    fprintf( stderr, "; range:  %d..%d\n", (*s)->start, (*s)->end ) ;
                 }
 
-                // Hmm, all this iterator business is somewhat
-                // lacking...
+                // Hmm, all this iterator business is somewhat lacking...
                 char *paln1 = aln_con, *paln2 = aln_ass ;
                 int ass_pos = 0 ;
                 while( ass_pos != (*s)->start && *paln1 && *paln2 ) 
@@ -675,36 +713,36 @@ int main( int argc, char * const argv[] )
 
                 while( ass_pos != (*s)->end +1 && *paln1 && *paln2 && !in_ref.empty() && *in_ass && *in_frag_v_ass && *in_frag_v_ref )
                 {
-                    // oops, lookup in table is absolutely needed.
                     if( is_weakly_diagnostic( *paln1, *paln2 ) ) {
                         dp_list::const_iterator iter = l.find( ass_pos ) ;
                         if( iter != l.end() ) {
                             if( verbose >= 4 )
-                                fprintf( stderr, "diagnostic pos.: %d %c/%c %c/%c",
-                                        ass_pos, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                                fprintf( stderr, "diagnostic pos. %s: %d %c(%c)/%c %c/%c",
+                                        iter->second.strong >1 ? "(strong)" : "  (weak)", ass_pos, iter->second.first, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
                             if( *in_frag_v_ref != *in_frag_v_ass ) 
                             {
-                                if( verbose >= 4 ) fputs( "in disagreement.\n", stderr ) ;
+                                if( verbose >= 4 ) fputs( " in disagreement.\n", stderr ) ;
                             }
                             else
                             {
-                                bool maybe_clean = consistent( adna, *in_ass, *in_frag_v_ass ) ;
-                                bool maybe_dirt =  consistent( adna, in_ref[0], *in_frag_v_ref ) ;
+                                bool maybe_clean = consistent( adna, iter->second.second, *in_frag_v_ass ) ;
+                                bool maybe_dirt =  consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
 
                                 if( verbose >= 4 )
                                 {
-                                    fputs( maybe_dirt  ? "" : "in", stderr ) ;
-                                    fputs( " consistent/", stderr ) ;
+                                    fputs( maybe_dirt  ? " " : " in", stderr ) ;
+                                    fputs( "consistent/", stderr ) ;
                                     fputs( maybe_clean ? "" : "in", stderr ) ;
-                                    fputs( " consistent\n", stderr ) ; 
+                                    fputs( "consistent\n", stderr ) ; 
                                 }
 
-                                if( maybe_clean && !maybe_dirt && klass == unknown ) klass = clean ;
-                                if( maybe_clean && !maybe_dirt && klass == dirt    ) klass = conflict ;
-                                if( !maybe_clean && maybe_dirt && klass == unknown ) klass = dirt ;
-                                if( !maybe_clean && maybe_dirt && klass == clean   ) klass = conflict ;
-                                if( !maybe_clean && !maybe_dirt )                    klass = nonsense ;
-                                if( maybe_dirt != maybe_clean ) votes++ ;
+                                update_class( klass2, maybe_clean, maybe_dirt ) ;
+                                if( iter->second.strong == 2 ) 
+                                    update_class( klass, maybe_clean, maybe_dirt ) ;
+                                if( maybe_dirt != maybe_clean ) {
+                                    votes2++ ;
+                                    if( iter->second.strong == 2 ) votes++ ;
+                                }
                             }
                         }
                     }
@@ -725,15 +763,17 @@ int main( int argc, char * const argv[] )
                     ++paln1 ;
                     ++paln2 ;
                 }
+                if( verbose >= 4 ) putc( '\n', stderr ) ;
             }
 
             Bfrags::const_iterator i = bfrags.find( (*s)->id ) ;
-
+            Bfrags::const_iterator i2 = bfrags2.find( (*s)->id ) ;
 
             switch( (*s)->segment )
             {
                 case 'b':
                     bfrags[ (*s)->id ] = std::make_pair( klass, votes ) ;
+                    bfrags2[ (*s)->id ] = std::make_pair( klass2, votes2 ) ;
                     if( verbose >= 3 ) putc( '\n', stderr ) ;
                     break ;
 
@@ -749,10 +789,23 @@ int main( int argc, char * const argv[] )
                         klass = merge_whatsit( klass, i->second.first ) ;
                     }
 
+                    if( i2 == bfrags2.end() ) 
+                    {
+                        fputs( (*s)->id, stderr ) ;
+                        fputs( "/f is missing its back.\n", stderr ) ;
+                    }
+                    else
+                    {
+                        votes2 += i->second.second ;
+                        klass2 = merge_whatsit( klass2, i->second.first ) ;
+                    }
+
                 case 'a':
                     if( verbose >= 2 ) fprintf( stderr, "%s is %s (%d votes)\n", (*s)->id, label[klass], votes ) ;
+                    if( verbose >= 2 ) fprintf( stderr, "%s is %s (%d votes)\n", (*s)->id, label[klass2], votes2 ) ;
                     if( verbose >= 3 ) putc( '\n', stderr ) ;
                     summary[klass]++ ;
+                    summary2[klass2]++ ;
                     break ;
 
                 default:
@@ -762,32 +815,16 @@ int main( int argc, char * const argv[] )
             }
         }
 
-        {
-            double z = 1.96 ; // this is Z_{0.975}, giving a 95% confidence interval (I hope...)
-            double k = summary[dirt], n = k + summary[clean] ;
-            double p_ = k / n ;
-            double c = p_ + 0.5 * z * z / n ;
-            double w = z * sqrt( p_ * (1-p_) / n + 0.25 * z * z / (n*n) ) ;
-            double d = 1 + z * z / n ;
-            double lb = 100.0 * (c-w) / d ;         	// lower bound of CI
-            double ml = 100.0 * p_ ;         			// ML estimate
-            double ub = 100.0 * (c+w) / d ;      		// upper bound of CI
-
-            for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
-            {
-                if( mktable ) {
-                    printf( "%d\t", summary[klass] ) ;
-                } else {
-                    printf( "  %s fragments: %d", label[klass], summary[klass] ) ;
-                    if( klass == dirt )
-                    {
-                        printf( " (%.1f .. %.1f .. %.1f%%)", lb, ml, ub ) ;
-                    }
-                    putchar( '\n' ) ;
-                }
-            }
-            if( mktable ) printf( "%.1f\t%.1f\t%.1f\t", lb, ml, ub ) ;
+        if( !mktable ) {
+            int t = 0 ;
+            for( dp_list::const_iterator i = l.begin(), e = l.end() ; i != e ; ++i )
+                if( i->second.strong > 1 ) t++ ;
+            printf( "  strongly diagnostic positions: %d\n", t ) ;
         }
+        print_results( summary, mktable ) ;
+        if( !mktable ) printf( "  weakly diagnostic positions: %d\n", (int)l.size() ) ;
+        print_results( summary2, mktable ) ;
+
         free_map_alignment( maln ) ;
         free( aln_con ) ;
         free( aln_ass ) ;
