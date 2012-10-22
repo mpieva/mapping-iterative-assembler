@@ -91,7 +91,11 @@ void print_aln( const char* aln1, const char* aln2 )
 // List of diagnostic positions: Coordinates are relative to assembly
 // (we want to quickly know whether a fragment overlaps a DP).  We'll
 // store the reference bases along with it.
-struct Dp { char first, second, strong ; } ;
+enum Strength { weak, effective, strong } ;
+struct Dp { 
+    char first, second ;
+    Strength strength ;
+} ;
 typedef std::map< int, Dp > dp_list ;
 
 // Everything that admits no overlap is strongly diagnostic, unless it's
@@ -140,7 +144,7 @@ dp_list mk_dp_list( const char* aln1, const char* aln2, int span_from, int span_
 		if( is_weakly_diagnostic( *aln1, *aln2 ) ) {
             l[index].first = *aln1 ;
             l[index].second = *aln2 ;
-            l[index].strong = is_strongly_diagnostic( *aln1, *aln2 ) ? 2 : 0 ;
+            l[index].strength = is_strongly_diagnostic( *aln1, *aln2 ) ? strong : weak ;
         }
 		if( *aln2 != '-' ) ++index ;
 		++aln1 ;
@@ -287,13 +291,14 @@ struct cached_pwaln {
     std::string frag_seq ;
 } ;
 
-void update_class( whatsit &klass, bool maybe_clean, bool maybe_dirt )
+void update_class( whatsit &klass, int& votes, bool maybe_clean, bool maybe_dirt )
 {
     if( maybe_clean && !maybe_dirt && klass == unknown ) klass = clean ;
     if( maybe_clean && !maybe_dirt && klass == dirt    ) klass = conflict ;
     if( !maybe_clean && maybe_dirt && klass == unknown ) klass = dirt ;
     if( !maybe_clean && maybe_dirt && klass == clean   ) klass = conflict ;
     if( !maybe_clean && !maybe_dirt )                    klass = nonsense ;
+    if( maybe_clean != maybe_dirt ) votes++ ;
 }
 
 void print_results( int *summary, bool mktable )
@@ -391,12 +396,15 @@ int main( int argc, char * const argv[] )
 
     if( mktable ) {
         fputs( "#Filename\tAln.dist\t#diff\t#diag\t#strong\t#eff\t#tv\t", stdout ) ;
-        for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
-        {
-            fputs( label[klass], stdout ) ;
-            putchar( '\t' ) ;
+        for( int i =0 ; i != 2 ; ++i ) {
+            for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
+            {
+                fputs( label[klass], stdout ) ;
+                putchar( '\t' ) ;
+            }
+            fputs( "LB\tML\tUB", stdout ) ;
+            putc( i ? '\n' : '\t', stdout ) ;
         }
-        puts( "LB\tML\tUB" /* \t#match\t#mism\tLB'\tML'\tUB'" */ ) ;
     }
 
     for( ; optind != argc ; ++optind )
@@ -447,7 +455,7 @@ int main( int argc, char * const argv[] )
         {
             int s = 0 ;
             for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
-                if( i->second.strong ) ++s ;
+                if( i->second.strength > weak ) ++s ;
             if( mktable ) printf( "%d\t%d\t", (int)l.size(), s ) ; 
             else {
                 printf( "  %d diagnostic positions", (int)l.size() ) ;
@@ -606,10 +614,10 @@ int main( int argc, char * const argv[] )
                             bool maybe_clean = consistent( adna, iter->second.second, *in_frag_v_ass ) ;
                             bool maybe_dirt =  consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
 
-                            if( !maybe_clean && maybe_dirt && !iter->second.strong ) {
+                            if( !maybe_clean && maybe_dirt && iter->second.strength == weak ) {
                                 if( verbose >= 4 )
-                                    fputs( " possible contaminant, upgraded to strong.", stderr ) ;
-                                iter->second.strong = 1 ;
+                                    fputs( " possible contaminant, upgraded to `effective'.", stderr ) ;
+                                iter->second.strength = effective ;
                             }
                         }
                     }
@@ -641,7 +649,7 @@ int main( int argc, char * const argv[] )
         {
             dp_list::iterator k = i ;
             k++ ;
-            if( !i->second.strong ) l.erase( i ) ;
+            if( i->second.strength == weak ) l.erase( i ) ;
             i=k ;
         }
         {
@@ -718,7 +726,8 @@ int main( int argc, char * const argv[] )
                         if( iter != l.end() ) {
                             if( verbose >= 4 )
                                 fprintf( stderr, "diagnostic pos. %s: %d %c(%c)/%c %c/%c",
-                                        iter->second.strong >1 ? "(strong)" : "  (weak)", ass_pos, iter->second.first, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                                        iter->second.strength == strong ? "(strong)" : "  (weak)",
+                                        ass_pos, iter->second.first, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
                             if( *in_frag_v_ref != *in_frag_v_ass ) 
                             {
                                 if( verbose >= 4 ) fputs( " in disagreement.\n", stderr ) ;
@@ -726,7 +735,7 @@ int main( int argc, char * const argv[] )
                             else
                             {
                                 bool maybe_clean = consistent( adna, iter->second.second, *in_frag_v_ass ) ;
-                                bool maybe_dirt =  consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
+                                bool maybe_dirt  = consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
 
                                 if( verbose >= 4 )
                                 {
@@ -736,13 +745,9 @@ int main( int argc, char * const argv[] )
                                     fputs( "consistent\n", stderr ) ; 
                                 }
 
-                                update_class( klass2, maybe_clean, maybe_dirt ) ;
-                                if( iter->second.strong == 2 ) 
-                                    update_class( klass, maybe_clean, maybe_dirt ) ;
-                                if( maybe_dirt != maybe_clean ) {
-                                    votes2++ ;
-                                    if( iter->second.strong == 2 ) votes++ ;
-                                }
+                                update_class( klass2, votes2, maybe_clean, maybe_dirt && !maybe_clean ) ;
+                                if( iter->second.strength == strong ) 
+                                    update_class( klass, votes, maybe_clean, maybe_dirt ) ;
                             }
                         }
                     }
@@ -818,11 +823,11 @@ int main( int argc, char * const argv[] )
         if( !mktable ) {
             int t = 0 ;
             for( dp_list::const_iterator i = l.begin(), e = l.end() ; i != e ; ++i )
-                if( i->second.strong > 1 ) t++ ;
+                if( i->second.strength == strong ) t++ ;
             printf( "  strongly diagnostic positions: %d\n", t ) ;
         }
         print_results( summary, mktable ) ;
-        if( !mktable ) printf( "  weakly diagnostic positions: %d\n", (int)l.size() ) ;
+        if( !mktable ) printf( "  effectively diagnostic positions: %d\n", (int)l.size() ) ;
         print_results( summary2, mktable ) ;
 
         free_map_alignment( maln ) ;
