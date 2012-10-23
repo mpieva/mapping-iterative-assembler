@@ -1022,6 +1022,7 @@ AlignmentP init_alignment( int size1, int size2,
 
 void free_alignment( AlignmentP al ) {
   if( al ) {
+    free( al->align_mask ) ;
     free( al->hprs ) ;
     free( al->hprl ) ;
     free( al->hpcs ) ;

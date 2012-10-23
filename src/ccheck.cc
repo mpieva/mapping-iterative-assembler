@@ -184,7 +184,7 @@ bool consistent( bool adna, char x, char y )
 
 enum whatsit { unknown, clean, dirt, conflict, nonsense, maxwhatsits } ;
 
-const char *label[] = { "unclassified", "clean       ", "polluting   ", "conflicting ", "nonsensical " } ;
+const char *label[] = { "unclassified", "clean", "polluting", "conflicting", "nonsensical", "LB", "ML", "UB" } ;
 
 whatsit merge_whatsit( whatsit a, whatsit b )
 {
@@ -313,12 +313,16 @@ void print_results( int *summary, bool mktable )
     double ml = 100.0 * p_ ;         			// ML estimate
     double ub = 100.0 * (c+w) / d ;      		// upper bound of CI
 
+    int labellen = 0 ;
+    for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
+        if( strlen(label[klass]) > labellen ) labellen = strlen(label[klass]) ;
+
     for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
     {
         if( mktable ) {
             printf( "%d\t", summary[klass] ) ;
         } else {
-            printf( "  %s fragments: %d", label[klass], summary[klass] ) ;
+            printf( "  %*s fragments: %d", labellen, label[klass], summary[klass] ) ;
             if( klass == dirt )
             {
                 printf( " (%.1f .. %.1f .. %.1f%%)", lb, ml, ub ) ;
@@ -395,16 +399,17 @@ int main( int argc, char * const argv[] )
 	if( !hum_ref.rcseq ) make_reverse_complement( &hum_ref ) ;
 
     if( mktable ) {
-        fputs( "#Filename\tAln.dist\t#diff\t#diag\t#strong\t#eff\t#tv\t", stdout ) ;
+        fputs( "#Filename\tAln.dist\t#diff\t#weak\t#tv", stdout ) ;
         for( int i =0 ; i != 2 ; ++i ) {
-            for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
+            fputs( i ? "\t#eff" : "\t#strong", stdout ) ;
+            for( int klass = 0 ; klass != sizeof(label)/sizeof(label[0]) ; ++klass )
             {
-                fputs( label[klass], stdout ) ;
                 putchar( '\t' ) ;
+                fputs( label[klass], stdout ) ;
+                if( i ) putchar( '\'' ) ;
             }
-            fputs( "LB\tML\tUB", stdout ) ;
-            putc( i ? '\n' : '\t', stdout ) ;
         }
+        putchar( '\n' ) ;
     }
 
     for( ; optind != argc ; ++optind )
@@ -452,18 +457,17 @@ int main( int argc, char * const argv[] )
         if( mktable ) printf( "%u\t", (unsigned)l.size() ) ;
         else printf( "  %u total differences between reference and assembly.\n", (unsigned)l.size() ) ;
 
-        {
-            int s = 0 ;
-            for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
-                if( i->second.strength > weak ) ++s ;
-            if( mktable ) printf( "%d\t%d\t", (int)l.size(), s ) ; 
-            else {
-                printf( "  %d diagnostic positions", (int)l.size() ) ;
-                if( span_from != 0 || span_to != INT_MAX )
-                    printf( " in range [%d,%d)", span_from, span_to ) ;
-                printf( ", %d of which are strongly diagnostic.\n", s ) ;
-            }
+        int num_strong = 0 ;
+        for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
+            if( i->second.strength > weak ) ++num_strong ;
+        if( mktable ) printf( "%d\t", (int)l.size() ) ; 
+        else {
+            printf( "  %d diagnostic positions", (int)l.size() ) ;
+            if( span_from != 0 || span_to != INT_MAX )
+                printf( " in range [%d,%d)", span_from, span_to ) ;
+            printf( ", %d of which are strongly diagnostic.\n", num_strong ) ;
         }
+
         if( verbose >= 3 ) 
         {
             dp_list::const_iterator i = l.begin() ;
@@ -541,9 +545,9 @@ int main( int argc, char * const argv[] )
             }
         
             frag_aln->seq1 = ref_for_mia.c_str() ;
+            frag_aln->len1 = ref_for_mia.size() ;
             frag_aln->seq2 = the_read.c_str() ;
-            frag_aln->len1 = size ;
-            frag_aln->len2 = size ;
+            frag_aln->len2 = the_read.size() ;
             frag_aln->sg5 = 1 ;
             frag_aln->sg3 = 1 ;
             frag_aln->submat = submat ;
@@ -656,7 +660,7 @@ int main( int argc, char * const argv[] )
             int t = 0 ;
             for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
                 if( is_transversion( i->second.first, i->second.second ) ) ++t ;
-            if( mktable ) printf( "%d\t%d\t", (int)l.size(), t ) ; 
+            if( mktable ) printf( "%d\t%d\t", t, num_strong ) ; 
             else {
                 printf( "  %d effectively diagnostic positions", (int)l.size() ) ;
                 if( span_from != 0 || span_to != INT_MAX )
@@ -828,12 +832,15 @@ int main( int argc, char * const argv[] )
         }
         print_results( summary, mktable ) ;
         if( !mktable ) printf( "  effectively diagnostic positions: %d\n", (int)l.size() ) ;
+        else printf( "%d\t", (int)l.size() ) ; 
+
         print_results( summary2, mktable ) ;
+        putc( '\n', stdout ) ;
 
         free_map_alignment( maln ) ;
         free( aln_con ) ;
         free( aln_ass ) ;
-    } while(0) ;
+    }
 }
 
 

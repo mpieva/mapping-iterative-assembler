@@ -3,7 +3,7 @@
 /* Initialize a MapAlignment object and return a pointer to it */
 MapAlignmentP init_map_alignment(void) {
     MapAlignmentP aln;
-    AlnSeqP first_seq, as;
+    AlnSeqP as;
     size_t i, j;
 
     // First, allocate the alignment
@@ -28,13 +28,6 @@ MapAlignmentP init_map_alignment(void) {
     aln->ref->circular = 0;
     aln->ref->wrap_seq_len = 0;
 
-    // Allocate memory for all the aligned sequences
-    first_seq = (AlnSeqP) save_malloc(INIT_NUM_ALN_SEQS *
-            sizeof ( AlnSeq));
-    if (first_seq == NULL) {
-        return NULL;
-    }
-
     // Now, allocate the array of pointers to the
     // aligned seqs
     aln->AlnSeqArray = (AlnSeqP*) save_malloc(INIT_NUM_ALN_SEQS *
@@ -45,7 +38,7 @@ MapAlignmentP init_map_alignment(void) {
 
     // Now, point the pointers to the pointees
     for (i = 0; i < INIT_NUM_ALN_SEQS; i++) {
-        aln->AlnSeqArray[i] = &first_seq[i];
+        aln->AlnSeqArray[i] = (AlnSeqP) save_malloc(sizeof(AlnSeq));
         /* Zero them out */
         as = aln->AlnSeqArray[i];
         for (j = 0; j <= MAX_ID_LEN; j++) {
@@ -81,7 +74,7 @@ MapAlignmentP init_map_alignment(void) {
  Returns nothing
  */
 void free_map_alignment(MapAlignmentP maln) {
-    int i ;
+    int i,j ;
 
     /* First, free the maln->ref components */
     free(maln->ref->seq);
@@ -90,9 +83,19 @@ void free_map_alignment(MapAlignmentP maln) {
     free(maln->ref);
 
     /* Now, free the AlnSeqArray */
-    free(maln->AlnSeqArray[0]);
+    for( i=0 ; i<maln->num_aln_seqs ; ++i )
+    {
+        int len = strlen(maln->AlnSeqArray[i]->seq) ;
+        for( j=0 ; j < len ; ++j )
+            free(maln->AlnSeqArray[i]->ins[j]) ;
+    }
+
+    for( i=0 ; i<maln->size ; ++i )
+        free(maln->AlnSeqArray[i]);
     free(maln->AlnSeqArray);
 
+    free(maln->fpsm);
+    free(maln->rpsm);
     /* Now, free the MapAlignment */
     free(maln);
 
@@ -381,7 +384,8 @@ MapAlignmentP read_ma(const char* fn) {
     AlnSeqP as;
     FILE* MAF;
     char* line;
-    char* tmp_ins;
+    char tmp_ins[MAX_INS_LEN] ;
+
     char c;
     int tmp, i, as_num, ins_pos, depth, row, A, C, G, T, N;
 
@@ -586,8 +590,6 @@ MapAlignmentP read_ma(const char* fn) {
         sscanf(line, "SMP %s\n", as->smp);
 
         /* Get INS line */
-        tmp_ins = (char*) save_malloc(MAX_INS_LEN * sizeof (char));
-
         fscanf(MAF, "INS_POS");
         while (fscanf(MAF, " %d %s", &ins_pos, tmp_ins) == 2) {
             as->ins[ins_pos] = (char*) save_malloc(MAX_INS_LEN * sizeof (char));
@@ -664,18 +666,9 @@ int grow_alns_map_alignment(MapAlignmentP aln) {
     int i, j, k;
     int new_size;
     AlnSeqP as;
-    AlnSeqP first_seq;
     AlnSeqP* NewAlnSeqArray;
 
     new_size = (aln->size) * 2;
-
-    // Allocate another chunk of memory for AlnSeq[] as big as it
-    // is now so we will double the size
-    first_seq = (AlnSeqP) save_malloc(aln->size * sizeof (AlnSeq));
-    if (first_seq == NULL) {
-        fprintf(stderr, "Out of memory, sucka!\n");
-        return 0;
-    }
 
     // Now, allocate the new array of pointers to the aligned seqs
     NewAlnSeqArray = (AlnSeqP*) save_malloc(new_size * sizeof (AlnSeqP));
@@ -694,7 +687,7 @@ int grow_alns_map_alignment(MapAlignmentP aln) {
     for (i = aln->size; i < new_size; i++) {
         /* Just in case there's some cruffy leftovers in our
          clean new memories */
-        NewAlnSeqArray[i] = &first_seq[k++];
+        NewAlnSeqArray[i] = (AlnSeqP) save_malloc(sizeof (AlnSeq));
         /* Zero them out */
         as = NewAlnSeqArray[i];
         for (j = 0; j <= MAX_ID_LEN; j++) {
