@@ -313,9 +313,13 @@ void print_results( int *summary, bool mktable )
     double ml = 100.0 * p_ ;         			// ML estimate
     double ub = 100.0 * (c+w) / d ;      		// upper bound of CI
 
+    int nn = summary[dirt] + summary[clean] ;
     int labellen = 0 ;
     for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
         if( strlen(label[klass]) > labellen ) labellen = strlen(label[klass]) ;
+
+    if( lb < 0 ) lb = 0 ;
+    if( ub > 1 ) ub = 1 ;
 
     for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
     {
@@ -325,12 +329,15 @@ void print_results( int *summary, bool mktable )
             printf( "  %*s fragments: %d", labellen, label[klass], summary[klass] ) ;
             if( klass == dirt )
             {
-                printf( " (%.1f .. %.1f .. %.1f%%)", lb, ml, ub ) ;
+                if( nn ) printf( " (%.1f .. %.1f .. %.1f%%)", lb, ml, ub ) ;
             }
             putchar( '\n' ) ;
         }
     }
-    if( mktable ) printf( "%.1f\t%.1f\t%.1f\t", lb, ml, ub ) ;
+    if( mktable ) {
+        if( nn ) printf( "%.1f\t%.1f\t%.1f\t", lb, ml, ub ) ;
+        else fputs( "N/A\tN/A\tN/A\t", stdout ) ;
+    }
     else putchar( '\n' ) ;
 }
 
