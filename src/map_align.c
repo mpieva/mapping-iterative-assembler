@@ -413,9 +413,14 @@ int alnSeqCmp(const void* as1_, const void* as2_) {
 	return 0;
 }
 
+/* Computes the reverse complement of a single base.  It must support
+ * IUPAC ambiguity codes, small case letters, and gap symbols. */
 char revcom_char(const char base) {
     char tbl[] = "TVGH\0\0CD\0\0M\0KN\0\0\0YSAABWXR\0" ;
     char rc = 0 ;
+
+    if( base == '-' ) return '-' ;
+
     if( 'A' <= base && base <= 'Z' )
         rc = tbl[ base - 'A' ] ;
     else if( 'a' <= base && base <= 'z' )
