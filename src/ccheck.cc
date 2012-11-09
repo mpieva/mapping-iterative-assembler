@@ -93,7 +93,7 @@ void print_aln( const char* aln1, const char* aln2 )
 // store the reference bases along with it.
 enum Strength { weak, effective, strong } ;
 struct Dp { 
-    char first, second ;
+    char consensus, assembly, contaminant ;
     Strength strength ;
 } ;
 typedef std::map< int, Dp > dp_list ;
@@ -142,8 +142,8 @@ dp_list mk_dp_list( const char* aln1, const char* aln2, int span_from, int span_
 	while( index != span_to && *aln1 && *aln2 )
 	{
 		if( is_weakly_diagnostic( *aln1, *aln2 ) ) {
-            l[index].first = *aln1 ;
-            l[index].second = *aln2 ;
+            l[index].consensus = *aln1 ;
+            l[index].assembly = *aln2 ;
             l[index].strength = is_strongly_diagnostic( *aln1, *aln2 ) ? strong : weak ;
         }
 		if( *aln2 != '-' ) ++index ;
@@ -301,6 +301,21 @@ void update_class( whatsit &klass, int& votes, bool maybe_clean, bool maybe_dirt
     if( maybe_clean != maybe_dirt ) votes++ ;
 }
 
+void print_dp_list( FILE* out, dp_list::const_iterator i, dp_list::const_iterator e, char t )
+{
+    while( i != e ) {
+        char foo[] = { '(', i->second.contaminant, ')', 0 } ;
+        fprintf( out, "<%d%c:%c%s,%c>",
+                i->first,  "wes"[i->second.strength], 
+                i->second.consensus, i->second.strength == effective ? foo : "",
+                i->second.assembly ) ;
+        if( ++i == e ) break ;
+        putc( ',', out ) ;
+        putc( ' ', out ) ;
+    }
+    if(t) putc( t, out ) ;
+}
+
 void print_results( int *summary, bool mktable )
 {
     double z = 1.96 ; // this is Z_{0.975}, giving a 95% confidence interval (I hope...)
@@ -319,7 +334,7 @@ void print_results( int *summary, bool mktable )
         if( strlen(label[klass]) > labellen ) labellen = strlen(label[klass]) ;
 
     if( lb < 0 ) lb = 0 ;
-    if( ub > 1 ) ub = 1 ;
+    if( ub > 100 ) ub = 100 ;
 
     for( whatsit klass = unknown ; klass != maxwhatsits ; klass = (whatsit)( (int)klass +1 ) )
     {
@@ -475,13 +490,7 @@ int main( int argc, char * const argv[] )
             printf( ", %d of which are strongly diagnostic.\n", num_strong ) ;
         }
 
-        if( verbose >= 3 ) 
-        {
-            dp_list::const_iterator i = l.begin() ;
-            if( i != l.end() ) { fprintf( stderr, "<%d:%c,%c>", i->first, i->second.first, i->second.second ) ; ++i ; }
-            for( ; i != l.end() ; ++i ) fprintf( stderr, ", <%d:%c,%c>", i->first, i->second.first, i->second.second ) ;
-            putc( '\n', stderr ) ;
-        }
+        if( verbose >= 3 ) print_dp_list( stderr, l.begin(), l.end(), '\n' ) ;
 
         typedef std::map< std::string, std::pair< whatsit, int > > Bfrags ;
         Bfrags bfrags, bfrags2 ;
@@ -504,9 +513,7 @@ int main( int argc, char * const argv[] )
                 if( verbose >= 4 ) 
                 {
                     putc( ':', stderr ) ; putc( ' ', stderr ) ;
-                    dp_list::const_iterator i = p.first ;
-                    if( i != p.second ) { fprintf( stderr, "<%d:%c,%c>", i->first, i->second.first, i->second.second ) ; ++i ; }
-                    for( ; i != p.second ; ++i ) fprintf( stderr, ", <%d:%c,%c>", i->first, i->second.first, i->second.second ) ;
+                    print_dp_list( stderr, p.first, p.second, 0 ) ;
                 }
                 fprintf( stderr, "; range:  %d..%d\n", (*s)->start, (*s)->end ) ;
             }
@@ -617,17 +624,18 @@ int main( int argc, char * const argv[] )
                     } else {
                         if( verbose >= 4 )
                             fprintf( stderr, "diagnostic pos.: %d %c(%c)/%c %c/%c",
-                                    ass_pos, iter->second.first, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                                    ass_pos, iter->second.consensus, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
                         if( *in_frag_v_ref != *in_frag_v_ass ) 
                         {
                             if( verbose >= 4 ) fputs( " in disagreement.", stderr ) ;
                         } else {
-                            bool maybe_clean = consistent( adna, iter->second.second, *in_frag_v_ass ) ;
-                            bool maybe_dirt =  consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
+                            bool maybe_clean = consistent( adna, iter->second.assembly, *in_frag_v_ass ) ;
+                            bool maybe_dirt =  consistent( adna, iter->second.consensus,  *in_frag_v_ref ) ;
 
                             if( !maybe_clean && maybe_dirt && iter->second.strength == weak ) {
                                 if( verbose >= 4 )
                                     fputs( " possible contaminant, upgraded to `effective'.", stderr ) ;
+                                iter->second.contaminant = *in_frag_v_ref ;
                                 iter->second.strength = effective ;
                             }
                         }
@@ -666,7 +674,7 @@ int main( int argc, char * const argv[] )
         {
             int t = 0 ;
             for( dp_list::const_iterator i = l.begin() ; i != l.end() ; ++i )
-                if( is_transversion( i->second.first, i->second.second ) ) ++t ;
+                if( is_transversion( i->second.consensus, i->second.assembly ) ) ++t ;
             if( mktable ) printf( "%d\t%d\t", t, num_strong ) ; 
             else {
                 printf( "  %d effectively diagnostic positions", (int)l.size() ) ;
@@ -675,6 +683,7 @@ int main( int argc, char * const argv[] )
                 printf( ", %d of which are transversions.\n\n", t ) ;
             }
         }
+        if( verbose >= 3 ) print_dp_list( stderr, l.begin(), l.end(), '\n' ) ;
 
         if( verbose >= 2 ) fputs( "Pass two: classifying fragments.\n", stderr ) ;
         std::deque< cached_pwaln >::const_iterator cpwaln = cached_pwalns.begin() ;
@@ -705,9 +714,7 @@ int main( int argc, char * const argv[] )
                     if( verbose >= 4 ) 
                     {
                         putc( ':', stderr ) ; putc( ' ', stderr ) ;
-                        dp_list::const_iterator i = p.first ;
-                        if( i != p.second ) { fprintf( stderr, "<%d:%c,%c>", i->first, i->second.first, i->second.second ) ; ++i ; }
-                        for( ; i != p.second ; ++i ) fprintf( stderr, ", <%d:%c,%c>", i->first, i->second.first, i->second.second ) ;
+                        print_dp_list( stderr, p.first, p.second, 0 ) ;
                     }
                     fprintf( stderr, "; range:  %d..%d\n", (*s)->start, (*s)->end ) ;
                 }
@@ -738,15 +745,15 @@ int main( int argc, char * const argv[] )
                             if( verbose >= 4 )
                                 fprintf( stderr, "diagnostic pos. %s: %d %c(%c)/%c %c/%c",
                                         iter->second.strength == strong ? "(strong)" : "  (weak)",
-                                        ass_pos, iter->second.first, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
+                                        ass_pos, iter->second.consensus, in_ref[0], *in_frag_v_ref, *in_ass, *in_frag_v_ass ) ;
                             if( *in_frag_v_ref != *in_frag_v_ass ) 
                             {
                                 if( verbose >= 4 ) fputs( " in disagreement.\n", stderr ) ;
                             }
                             else
                             {
-                                bool maybe_clean = consistent( adna, iter->second.second, *in_frag_v_ass ) ;
-                                bool maybe_dirt  = consistent( adna, iter->second.first,  *in_frag_v_ref ) ;
+                                bool maybe_clean = consistent( adna, iter->second.assembly, *in_frag_v_ass ) ;
+                                bool maybe_dirt  = consistent( adna, iter->second.consensus,  *in_frag_v_ref ) ;
 
                                 if( verbose >= 4 )
                                 {
