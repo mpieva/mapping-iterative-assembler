@@ -205,11 +205,13 @@ bool sanity_check_sequence( const char* s )
 
 std::string find_maln( std::string fn )
 {
-    if( fn.length() <= 2 || fn.substr( fn.length()-2 ) != ".1" ) return fn ;
+
     size_t p = fn.rfind( '/' ) ;
     std::string dir = p == std::string::npos ? std::string(".") : fn.substr( 0, p ) ;
-    std::string base = p == std::string::npos ? fn.substr( 0, fn.length()-1 ) 
-                                              : fn.substr( p+1, fn.length()-p-2 ) ;
+    std::string base = p == std::string::npos ? fn : fn.substr( p+1, fn.length()-p-1 ) ;
+    while( base.length() >= 1 && isdigit( base[base.length()-1] ) )
+        base = base.substr( 0, base.length()-1 ) ;
+
     int num = 1 ;
     DIR* d = opendir( dir.c_str() ) ;
     while( struct dirent* de = readdir( d ) )
@@ -270,7 +272,7 @@ void usage( const char* pname )
 		"  -t, --transversions      Treat only transversions as diagnostic\n"
 		"  -s, --span M-N           Look only at range from M to N\n"
 		"  -n, --numpos N           Require N diagnostic sites in a single read (default: 1)\n"
-        "  -M, --max-maln           Find the highest numbered maln file in a series\n"
+        "  -f, --force              Do not look for a higher numbered .maln\n"
         "  -T, --table              Output as tables (easier for scripts, herder on the eyes)\n"
 		"  -v, --verbose            Increase verbosity level (can be repeated)\n"
 		"  -h, --help               Print this help message\n\n", stdout ) ;
@@ -360,7 +362,7 @@ int main( int argc, char * const argv[] )
 {
 	bool adna = false ;
 	bool transversions = false ;
-    bool be_clever = false ;
+    bool be_clever = true ;
     bool mktable = false ;
 	int min_diag_posns = 1 ;
 	int verbose = 0 ;
@@ -371,7 +373,7 @@ int main( int argc, char * const argv[] )
 
 	int opt ;
 	do {
-		opt = getopt_long( argc, argv, "r:avhts:d:n:MT", longopts, 0 ) ;
+		opt = getopt_long( argc, argv, "r:avhts:d:n:MfT", longopts, 0 ) ;
 		switch( opt ) 
 		{
 			case 'r': 
@@ -406,7 +408,9 @@ int main( int argc, char * const argv[] )
 				maxd = atoi( optarg ) ;
 				break ;
             case 'M':
-                be_clever = true ;
+                break ;
+            case 'f':
+                be_clever = false ;
                 break ;
             case 'T':
                 mktable = true ;
