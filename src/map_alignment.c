@@ -263,7 +263,7 @@ char* get_consensus(MapAlignmentP maln) {
             if ((aln_seq->start <= ref_pos) && // checked
                     (aln_seq->end >= ref_pos)) {
 
-                psm = (aln_seq->revcom) ? (maln->rpsm) : (maln->fpsm);
+                psm = aln_seq->revcom ? maln->rpsm : maln->fpsm;
 
                 add_base(aln_seq->seq[ref_pos - aln_seq->start], bcs, psm,
                         aln_seq->smp[ref_pos - aln_seq->start]);
@@ -360,8 +360,9 @@ int write_ma(char* fn, MapAlignmentP maln) {
       fprintf(MAF, "NUM_INPUTS %d\n", as->num_inputs);
       fprintf(MAF, "START %d\n", as->start);
       fprintf(MAF, "END %d\n", as->end);
-      fprintf(MAF, "RC %d\n", as->revcom);
-      fprintf(MAF, "TR %d\n", as->trimmed);
+      fprintf(MAF, "RC %d\n", (int)as->revcom);
+      fprintf(MAF, "TR %d\n", (int)as->trimmed);
+      fprintf(MAF, "DR %d\n", (int)as->dropped);
       fprintf(MAF, "SEG %c\n", as->segment);
       fprintf(MAF, "SEQ %s\n", as->seq);
       fprintf(MAF, "SMP %s\n", as->smp);
@@ -571,14 +572,20 @@ MapAlignmentP read_ma(const char* fn) {
 
         /* Get RC line */
         fgets(line, MAX_LINE_LEN, MAF);
-        sscanf(line, "RC %d\n", &as->revcom);
+        sscanf(line, "RC %d\n", &tmp) ; as->revcom = tmp;
 
         /* Get TR line */
         fgets(line, MAX_LINE_LEN, MAF);
-        sscanf(line, "TR %d\n", &as->trimmed);
+        sscanf(line, "TR %d\n", &tmp) ; as->trimmed = tmp;
+
+        /* Get DR line */
+        fgets(line, MAX_LINE_LEN, MAF);
+        if( 1 == sscanf(line, "DR %d\n", &tmp) ) {
+            as->dropped = tmp;
+            fgets(line, MAX_LINE_LEN, MAF);
+        }
 
         /* Get SEG line */
-        fgets(line, MAX_LINE_LEN, MAF);
         sscanf(line, "SEG %c\n", &as->segment);
 
         /* Get SEQ line */

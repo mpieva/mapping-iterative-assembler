@@ -319,7 +319,8 @@ void help( void ) {
   printf( "    \nALIGNMENT parameters:\n" );
   printf( "    -p <consensus calling code; default = 1>\n" );
   printf( "    -c means reference/assembly is circular\n" );
-  printf( "    -i iterate assembly until convergence\n" );
+  printf( "    -i iterate assembly until convergence (default)\n" );
+  printf( "    -n do not iterate assembly until convergence\n" );
   printf( "    -F <only output the FINAL assembly, not each iteration>\n" );
   printf( "    -D <distantly related reference sequence>\n" );
   printf( "    -h give special discount for homopolymer gaps\n" );
@@ -373,7 +374,7 @@ int main( int argc, char* argv[] ) {
   int seq_code = 0; // code to indicate sequence input format; 0 => fasta; 1 => fastq
   int do_adapter_trimming = 0; // Boolean, TRUE if we should try to trim
                                // adapter from input sequences
-  int iterate = 0; //Boolean, TRUE means interate the assembly until convergence
+  int iterate = 1; //Boolean, TRUE means interate the assembly until convergence
   // on an assembled sequence
   int FINAL_ONLY = 0; //Boolean, TRUE means only write out the final assembly maln file
                       //         FALSE (default) means write out each one
@@ -439,7 +440,7 @@ int main( int argc, char* argv[] ) {
 
 
   /* Process command line arguments */
-  while( (ich=getopt( argc, argv, "s:r:f:m:a:p:H:I:S:N:k:q:FTciuhDMUAC::" )) != -1 ) {
+  while( (ich=getopt( argc, argv, "s:r:f:m:a:p:H:I:S:N:k:q:FTcinuhDMUAC::" )) != -1 ) {
     switch(ich) {
     case 'c' :
       circular = 1;
@@ -452,6 +453,9 @@ int main( int argc, char* argv[] ) {
       if (optarg != NULL)
         TOLERANCE = atoi( optarg );
       fprintf( stderr, "setting collapsing tolerance to %d\n", TOLERANCE);
+      break;
+    case 'n' :
+      iterate = 0;
       break;
     case 'i' :
       iterate = 1;
@@ -835,10 +839,9 @@ int main( int argc, char* argv[] ) {
      if requested
   */
   memset(fw_align->align_mask, 1, fw_align->len1);
-  if ( collapse ) {
-    collapse_FSDB( fsdb, Hard_cut, SCORE_CUT_SET, 
-		   slope, intercept );
-  }
+  clean_FSDB( fsdb );
+  if ( collapse ) collapse_FSDB( fsdb, Hard_cut, SCORE_CUT_SET, slope, intercept );
+
   reiterate_assembly( last_assembly_cons, iter_num, maln, fsdb,
 		      fw_align, front_pwaln, back_pwaln, 
 		      ancsubmat, rcancsubmat );
@@ -930,15 +933,12 @@ int main( int argc, char* argv[] ) {
     /* Convergence? */
     if ( strcmp( assembly_cons, last_assembly_cons ) == 0 ) {
       fprintf( stderr, "Assembly convergence - writing final maln\n" );
-      write_ma( maln_fn, culled_maln );
     }
     else {
       fprintf( stderr, "Assembly did not converge after %d rounds, quitting\n", iter_num );
-      write_ma( maln_fn, culled_maln );
     }
-    if ( make_fastq ) {
-      write_fastq( fastq_out_fn, fsdb );
-    }
+    write_ma( maln_fn, culled_maln );
+    if ( make_fastq ) write_fastq( fastq_out_fn, fsdb );
   }
 
   /* No iteration, but we must still re-align everything with revcomped

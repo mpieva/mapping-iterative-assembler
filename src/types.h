@@ -67,12 +67,12 @@ typedef struct alnseq {
   // that will be filled with sequence
   int start;  // where this sequence starts relative to the reference (0-indexed)
   int end;    // where this sequence ends relative to the reference (0-indexed)
-  int revcom; // boolean to denote that this sequence has been
-              // reverse complemented
-  int trimmed; // boolean to denote that this sequence has been trimmed
   int score;  // the alignment score for this guy
   int num_inputs; // the number of input seqs if this is a collapsed seq
   char segment; // f=front, a=all, b=back, n=not applicable
+  char revcom  : 1; // indicates that this sequence has been reverse complemented
+  char trimmed : 1; // indicates that this sequence has been trimmed
+  char dropped : 1; // indicates that this sequence has been dropped from the consensus
 } AlnSeq;
 // pointer to struct aln_seq
 typedef struct alnseq* AlnSeqP;

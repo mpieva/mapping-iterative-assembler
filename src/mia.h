@@ -215,6 +215,7 @@ int sg_align ( MapAlignmentP maln, FragSeqP fs, FSDB fsdb,
 	       PWAlnFragP back_pwaln) ;
 
 
+void clean_FSDB( FSDB fsdb ) ;
 void collapse_FSDB( FSDB fsdb, int Hard_cut, 
 		    int SCORE_CUT_SET, double s, double n ) ;
 

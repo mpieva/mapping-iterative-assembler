@@ -343,43 +343,48 @@ void collapse_FSDB( FSDB fsdb, int Hard_cut,
     slope = slope_def;
   }
  
-  for ( i = 0; i < fsdb->num_fss; i++ ) {
+  for ( i = 0; i < fsdb->num_fss; /* i++ */ ) {
     fs = fsdb->fss[i];
-    if ( SCORE_CUT_SET ) { // ???
-      min_score_for_len = (double)(intercept + (slope * fs->seq_len));
+    if ( Hard_cut > 0 ) {
+      min_score_for_len = Hard_cut;
     }
     else {
       min_score_for_len = (double)(intercept + (slope * fs->seq_len));
     }
-    if ( Hard_cut > 0 ) {
-      min_score_for_len = Hard_cut;
-    }
 
-    if ( fs->unique_best &&
-	 (fs->score >= min_score_for_len) ) {
-      current_collapsing_fs = fs;
-      /* Has this guy been a unique best before and has his qss
-	 field initialized? */
-      if ( current_collapsing_fs->qss == NULL ) {
-	/* initialize the qss */
-	init_QSSP( current_collapsing_fs );
-      }
-      i++;
-      while( (i < fsdb->num_fss) &&
-	     (fsdb->fss[i]->unique_best == 0) ) {
-	fs = fsdb->fss[i];
-	if ( fs->score >= min_score_for_len ) {
-	  /* Collapsing puts these two together, increments
-	     the num_inputs field in the current_collapsing_fs,
-	     and sets the num_inputs field to 0 in the fs to
-	     mark it for removal */
-	  //collapse_fs( current_collapsing_fs, fs );
-	  add_fs( current_collapsing_fs, fs );
-	}
-	i++;
-      }
-      i--;
+    // This skips everything that isn't marked as unique (cannot
+    // actually happen, because of the sorting and the fact that
+    // everything non-unique was used up in the previous iteration) or
+    // has a bad score. 
+    //
+    // Instead, we now keep the badly scoring stuff, but skip it when
+    // aligning and mark it when producing output.
+
+    // if ( fs->unique_best &&
+	 // (fs->score >= min_score_for_len) ) {
+    current_collapsing_fs = fs;
+    /* Has this guy been a unique best before and has his qss
+       field initialized? */
+    if ( current_collapsing_fs->qss == NULL ) {
+        /* initialize the qss */
+        init_QSSP( current_collapsing_fs );
     }
+    i++;
+    while( (i < fsdb->num_fss) &&
+            (fsdb->fss[i]->unique_best == 0) ) {
+        fs = fsdb->fss[i];
+        if ( fs->score >= min_score_for_len ) {
+            /* Collapsing puts these two together, increments
+               the num_inputs field in the current_collapsing_fs,
+               and sets the num_inputs field to 0 in the fs to
+               mark it for removal */
+            //collapse_fs( current_collapsing_fs, fs );
+            add_fs( current_collapsing_fs, fs );
+        }
+        i++;
+    }
+    // i--;
+    // }
   }
 
   /* Time to take out the trash */
@@ -390,6 +395,16 @@ void collapse_FSDB( FSDB fsdb, int Hard_cut,
       j++;
     }
   }
+  fsdb->num_fss = j;
+}
+
+/* Cleans very bad alignments, equivalent to "-H 0".  This is run only
+ * once after initial alignment to permanently remove clutter from the output. */
+void clean_FSDB( FSDB fsdb ) {
+  size_t i, j;
+  for ( i = 0, j = 0 ; i < fsdb->num_fss; i++ )
+    if ( fsdb->fss[i]->score > 0 )
+      fsdb->fss[j++] = fsdb->fss[i];
   fsdb->num_fss = j;
 }
 
@@ -438,6 +453,7 @@ void cull_maln_from_fsdb( MapAlignmentP culled_maln,
   culled_nas = 0;
   for ( i = 0; i < fsdb->num_fss; i++ ) {
     fs = fsdb->fss[i];
+#if 0 
     if ( SCORE_CUT_SET ) {
       min_score_for_len = (double)(intercept + (slope * fs->seq_len));
     }
@@ -459,6 +475,9 @@ void cull_maln_from_fsdb( MapAlignmentP culled_maln,
     }
     if ( fs->unique_best && 
 	 (fs->score >= min_score_for_len) ) {
+#endif
+
+    if ( fs->unique_best ) {
       culled_maln->AlnSeqArray[culled_nas++] = fs->front_asp;
       if ( fs->back_asp != NULL ) {
 	culled_maln->AlnSeqArray[culled_nas++] = fs->back_asp;
@@ -563,8 +582,9 @@ char* consensus_assembly_string ( MapAlignmentP maln ) {
       aln_seq = maln->AlnSeqArray[j];
 
       /* Does this aligned fragment cover this position */
-      if ( (aln_seq->start <= ref_pos) && // checked
-	   (aln_seq->end   >= ref_pos) ) {
+      if ( (aln_seq->start <= ref_pos) &&
+	   (aln_seq->end   >= ref_pos) &&
+           !aln_seq->dropped ) {
 
 	if ( aln_seq->revcom ) {
 	  psm = maln->rpsm;
@@ -579,14 +599,8 @@ char* consensus_assembly_string ( MapAlignmentP maln ) {
       }
     }
     cons_base = find_consensus( bcs, maln->cons_code );
-    if ( (cons_base == '-') ||
-	 (cons_base == ' ') ) {
-      ;
-    }
-    else {
-      cons[cons_pos] = cons_base; 
-      cons_pos++;
-    }
+    if ( (cons_base != '-') && (cons_base != ' ') ) 
+      cons[cons_pos++] = cons_base; 
   }
   cons[cons_pos] = '\0';
   free( bcs );
