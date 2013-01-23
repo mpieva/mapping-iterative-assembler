@@ -937,7 +937,8 @@ int main( int argc, char* argv[] ) {
     else {
       fprintf( stderr, "Assembly did not converge after %d rounds, quitting\n", iter_num );
     }
-    write_ma( maln_fn, culled_maln );
+    sprintf( maln_fn, "%s.%d", maln_root, iter_num );
+    if( FINAL_ONLY ) write_ma( maln_fn, culled_maln );
     if ( make_fastq ) write_fastq( fastq_out_fn, fsdb );
   }
 

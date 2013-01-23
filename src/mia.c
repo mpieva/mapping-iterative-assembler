@@ -343,7 +343,7 @@ void collapse_FSDB( FSDB fsdb, int Hard_cut,
     slope = slope_def;
   }
  
-  for ( i = 0; i < fsdb->num_fss; /* i++ */ ) {
+  for ( i = 0; i < fsdb->num_fss; ) {
     fs = fsdb->fss[i];
     if ( Hard_cut > 0 ) {
       min_score_for_len = Hard_cut;
@@ -378,13 +378,10 @@ void collapse_FSDB( FSDB fsdb, int Hard_cut,
                the num_inputs field in the current_collapsing_fs,
                and sets the num_inputs field to 0 in the fs to
                mark it for removal */
-            //collapse_fs( current_collapsing_fs, fs );
             add_fs( current_collapsing_fs, fs );
         }
         i++;
     }
-    // i--;
-    // }
   }
 
   /* Time to take out the trash */
@@ -453,34 +450,32 @@ void cull_maln_from_fsdb( MapAlignmentP culled_maln,
   culled_nas = 0;
   for ( i = 0; i < fsdb->num_fss; i++ ) {
     fs = fsdb->fss[i];
-#if 0 
-    if ( SCORE_CUT_SET ) {
-      min_score_for_len = (double)(intercept + (slope * fs->seq_len));
-    }
-    else {
-      /* If we're using a distant reference genome, we may have sequence
-	 that overlaps many N positions. These should not be counted
-	 againt the length of this sequence */
-      if ( culled_maln->distant_ref ) {
-	alignable_len = find_alignable_len( fs, culled_maln->ref );
-	min_score_for_len =  (double)(intercept + (slope * alignable_len));
-	  
-      }
-      else {
-	min_score_for_len =  (double)(intercept + (slope * fs->seq_len));
-      }
-    }
+
+    /* If we're using a distant reference genome, we may have sequence
+       that overlaps many N positions. These should not be counted
+       againt the length of this sequence */
     if ( Hard_cut > 0 ) {
       min_score_for_len = Hard_cut;
     }
-    if ( fs->unique_best && 
-	 (fs->score >= min_score_for_len) ) {
-#endif
+    else if ( culled_maln->distant_ref ) {
+        alignable_len = find_alignable_len( fs, culled_maln->ref );
+        min_score_for_len =  (double)(intercept + (slope * alignable_len));
+
+    }
+    else {
+        min_score_for_len =  (double)(intercept + (slope * fs->seq_len));
+    }
 
     if ( fs->unique_best ) {
       culled_maln->AlnSeqArray[culled_nas++] = fs->front_asp;
+      if( fs->score < min_score_for_len ) {
+          fs->front_asp->dropped = 1 ;
+      }
       if ( fs->back_asp != NULL ) {
 	culled_maln->AlnSeqArray[culled_nas++] = fs->back_asp;
+        if( fs->score < min_score_for_len ) {
+            fs->back_asp->dropped = 1 ;
+        }
       }
     }
   }

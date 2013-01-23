@@ -58,6 +58,7 @@ MapAlignmentP init_map_alignment(void) {
         as->end = 0;
         as->revcom = 0;
         as->trimmed = 0;
+        as->dropped = 0;
         as->score = 0;
         as->segment = 'n';
     }
@@ -360,9 +361,9 @@ int write_ma(char* fn, MapAlignmentP maln) {
       fprintf(MAF, "NUM_INPUTS %d\n", as->num_inputs);
       fprintf(MAF, "START %d\n", as->start);
       fprintf(MAF, "END %d\n", as->end);
-      fprintf(MAF, "RC %d\n", (int)as->revcom);
-      fprintf(MAF, "TR %d\n", (int)as->trimmed);
-      fprintf(MAF, "DR %d\n", (int)as->dropped);
+      fprintf(MAF, "RC %d\n", !!as->revcom);
+      fprintf(MAF, "TR %d\n", !!as->trimmed);
+      fprintf(MAF, "DR %d\n", !!as->dropped);
       fprintf(MAF, "SEG %c\n", as->segment);
       fprintf(MAF, "SEQ %s\n", as->seq);
       fprintf(MAF, "SMP %s\n", as->smp);
@@ -714,6 +715,7 @@ int grow_alns_map_alignment(MapAlignmentP aln) {
         as->end = 0;
         as->revcom = 0;
         as->trimmed = 0;
+        as->dropped = 0;
         as->score = 0;
         as->segment = 'n';
     }
