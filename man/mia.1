@@ -1,6 +1,6 @@
 .TH MIA "1" "September 2009" "mia" "User Commands"
 .SH NAME
-MIA \fB\-\-\fR Mapping Iterativ Assembler
+MIA \fB\-\-\fR Mapping Iterative Assembler
 .IP
 A tool for creating short read assemblies.
 .SH "SYNOPSIS"
@@ -14,7 +14,11 @@ initial reference sequence in fasta format
 fasta or fastq file of fragments to align
 .TP
 \fB\-s\fR \fIsubstitution matrix\fR
-substitution matrix file used for scoring (\fBdefault\fR: \fIflat matrix\fR)
+substitution matrix file used for scoring (\fBdefault\fR: \fIflat matrix\fR).
+Mia searches for the substitution matrix first in the current directory,
+and if it is not found, in the default location.  If it still isn't
+found, a list of available matrices is printed.  (Therefore, use e.g.
+\fI\-s list\fR to get a list of installed matrices.)
 .TP
 \fB\-m\fR \fINAME\fR
 use \fINAME\fR as root file name for maln output file(s) (\fBdefault\fR: \fIassembly.maln.iter\fR)

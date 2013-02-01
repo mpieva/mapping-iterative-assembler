@@ -1,5 +1,10 @@
 #include "mia.h"
 
+#include <dirent.h>
+#include <libgen.h>
+#include <unistd.h>
+
+// vim:ts=8:noexpandtab:tw=132
 
 
 /* reiterate_assembly
@@ -291,6 +296,50 @@ inline int all_lower( const char* seq, const int kmer_len ) {
   return 1;
 }
 
+PSSMP find_read_pssm( const char* pname, const char* fn ) 
+{
+  if( strchr( fn, '/') || !access( fn, F_OK ) )
+    return read_pssm( fn ) ;
+  else {
+    PSSMP r = 0 ;
+    char *pn = strdup( pname ) ;
+    char *d  = dirname( pn ) ;
+    char *d1 = dirname( d ) ;
+
+    char *f2 = malloc( strlen(d1) + 21 + strlen(fn) ) ;
+    strcpy( f2, d1 ) ;
+    strcat( f2, "/share/mia/matrices/" ) ;
+    strcat( f2, fn ) ;
+
+    if( !access( f2, F_OK ) ) {
+      r = read_pssm( f2 ) ;
+    }
+    else
+    {
+      char *dd = dirname( f2 ) ;
+      DIR *dir = opendir( dd ) ;
+      if( dir ) {
+	struct dirent *de ;
+	fprintf( stderr, "Substitution matrix not found.  Known matrices in %s are:\n", dd ) ;
+
+	while( de = readdir(dir) ) {
+	  if( de->d_name[0] != '.' && de->d_type != DT_DIR )
+	    fprintf( stderr, "%s\n", de->d_name ) ;
+	}
+	closedir(dir) ;
+      } 
+      else 
+	// if we can't search the standard location, try opening locally anyway to get the usual error message
+	r = read_pssm( f2 ) ;
+
+    }
+
+    free(f2) ;
+    free(pn) ;
+    if( !r ) exit(1) ;
+    return r ;
+  }
+}
 
 void help( void ) {
   printf( "\n\n%s -- Mapping Iterativ Assembler V %s\n",PACKAGE_NAME, PACKAGE_VERSION);
@@ -358,7 +407,6 @@ void help( void ) {
 
 int main( int argc, char* argv[] ) {
 
-  char mat_fn[MAX_FN_LEN+1];
   char maln_fn[MAX_FN_LEN+1];
   char fastq_out_fn[MAX_FN_LEN+1];
   char maln_root[MAX_FN_LEN+1];
@@ -496,9 +544,8 @@ int main( int argc, char* argv[] ) {
       soft_mask = 1;
       break;
     case 's' :
-      strcpy( mat_fn, optarg );
       free( ancsubmat ); // trash the flat submat we initialized with
-      ancsubmat   = read_pssm( mat_fn );
+      ancsubmat = find_read_pssm( argv[0], optarg );
       free( rcancsubmat ); // trash the init rcsubmat, too
       rcancsubmat = revcom_submat( ancsubmat );
       any_arg = 1;
