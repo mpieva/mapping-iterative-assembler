@@ -1,5 +1,5 @@
 AM_CFLAGS = -O2
-
+AM_CPPFLAGS = -DDATA_PATH=\"$(pkgdatadir)\"
 
 bin_PROGRAMS = mia ma ccheck
 

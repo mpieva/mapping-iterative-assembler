@@ -1,10 +1,10 @@
 #include "mia.h"
+// vim:ts=8:noexpandtab:tw=132
 
 #include <dirent.h>
 #include <libgen.h>
 #include <unistd.h>
 
-// vim:ts=8:noexpandtab:tw=132
 
 
 /* reiterate_assembly
@@ -296,25 +296,17 @@ inline int all_lower( const char* seq, const int kmer_len ) {
   return 1;
 }
 
-PSSMP find_read_pssm( const char* pname, const char* fn ) 
+PSSMP find_read_pssm( const char* fn ) 
 {
   if( strchr( fn, '/') || !access( fn, F_OK ) )
     return read_pssm( fn ) ;
   else {
-    PSSMP r = 0 ;
-    char *pn = strdup( pname ) ;
-    char *d  = dirname( pn ) ;
-    char *d1 = dirname( d ) ;
-
-    char *f2 = malloc( strlen(d1) + 21 + strlen(fn) ) ;
-    strcpy( f2, d1 ) ;
-    strcat( f2, "/share/mia/matrices/" ) ;
+    char *f2 = alloca( strlen(DATA_PATH) + strlen("/matrices/") + strlen(fn) + 1 ) ;
+    strcpy( f2, DATA_PATH ) ;
+    strcat( f2, "/matrices/" ) ;
     strcat( f2, fn ) ;
 
-    if( !access( f2, F_OK ) ) {
-      r = read_pssm( f2 ) ;
-    }
-    else
+    if( access( f2, F_OK ) )
     {
       char *dd = dirname( f2 ) ;
       DIR *dir = opendir( dd ) ;
@@ -327,17 +319,11 @@ PSSMP find_read_pssm( const char* pname, const char* fn )
 	    fprintf( stderr, "%s\n", de->d_name ) ;
 	}
 	closedir(dir) ;
+	exit(1) ;
       } 
-      else 
-	// if we can't search the standard location, try opening locally anyway to get the usual error message
-	r = read_pssm( f2 ) ;
-
     }
-
-    free(f2) ;
-    free(pn) ;
-    if( !r ) exit(1) ;
-    return r ;
+    // if we don't search the standard location, try opening locally anyway to get the usual error message
+    return read_pssm( f2 ) ;
   }
 }
 
@@ -545,7 +531,7 @@ int main( int argc, char* argv[] ) {
       break;
     case 's' :
       free( ancsubmat ); // trash the flat submat we initialized with
-      ancsubmat = find_read_pssm( argv[0], optarg );
+      ancsubmat = find_read_pssm( optarg );
       free( rcancsubmat ); // trash the init rcsubmat, too
       rcancsubmat = revcom_submat( ancsubmat );
       any_arg = 1;
