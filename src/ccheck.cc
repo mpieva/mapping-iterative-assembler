@@ -273,7 +273,7 @@ void usage( const char* pname )
 		"  -s, --span M-N           Look only at range from M to N\n"
 		"  -n, --numpos N           Require N diagnostic sites in a single read (default: 1)\n"
         "  -f, --force              Do not look for a higher numbered .maln\n"
-        "  -T, --table              Output as tables (easier for scripts, herder on the eyes)\n"
+        "  -T, --table              Output as tables (easier for scripts, harder on the eyes)\n"
 		"  -v, --verbose            Increase verbosity level (can be repeated)\n"
 		"  -h, --help               Print this help message\n\n", stdout ) ;
 }

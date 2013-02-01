@@ -61,6 +61,10 @@ could restrict the analysis to the hypervariable region.  Again, this
 throws away information and could only ever be useful to placate
 reviewers of your paper.
 .TP
+\fB\-n\fR, \fB--numpos\fR \fIN\fR
+Require \fIN\fR diagnostic sites to be spanned by a single read for it
+to be considered.  Defaults to 1.
+.TP
 \fB\-d\fR, \fB--maxd\fR \fID\fR
 Allow up to \fID\fR differences when aligning assembly and contaminant.
 This option is not normally needed, unless your contaminant differs
@@ -77,6 +81,13 @@ gibberish.
 Normally, \fBccheck\fR looks for a .maln file with a higher number than
 given on the command line.  This behaviour is usually desired, but can
 be overridden by specifying the \fB\-f\fR option.  
+.TP  
+\fB\-T\fR, \fB--table\fR
+Change format of output to a table.  The table is much easier to parse
+for downstream scripts, but harder to read with naked eyes.  It may be
+way easier to use than the prose output if many input files are
+processed in a single invocation. 
+
 
 .SH NOTES
 Despite this documentation, which hints otherwise, you should probably
