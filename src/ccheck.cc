@@ -257,6 +257,8 @@ struct option longopts[] = {
 	{ "span", required_argument, 0, 's' },
 	{ "maxd", required_argument, 0, 'd' },
     { "table", no_argument, 0, 'T' },
+    { "shoot", no_argument, 0, 'F' },
+    { "foot", no_argument, 0, 'F' },
 	{ 0,0,0,0 }
 } ;
 
@@ -303,17 +305,23 @@ void update_class( whatsit &klass, int& votes, bool maybe_clean, bool maybe_dirt
     if( maybe_clean != maybe_dirt ) votes++ ;
 }
 
-void print_dp_list( FILE* out, dp_list::const_iterator i, dp_list::const_iterator e, char t )
+void print_dp_list( FILE* out, dp_list::const_iterator i, dp_list::const_iterator e, char t, bool strong_only = 0 )
 {
-    while( i != e ) {
+    for( ; i != e ; ++i ) {
         char foo[] = { '(', i->second.contaminant, ')', 0 } ;
-        fprintf( out, "<%d%c:%c%s,%c>",
-                i->first,  "wes"[i->second.strength], 
-                i->second.consensus, i->second.strength == effective ? foo : "",
-                i->second.assembly ) ;
-        if( ++i == e ) break ;
-        putc( ',', out ) ;
-        putc( ' ', out ) ;
+        if( strong_only ) {
+            if( i->second.strength >= strong ) {
+                fprintf( out, "<%d:%c%s,%c>, ",
+                        i->first, 
+                        i->second.consensus, i->second.strength == effective ? foo : "",
+                        i->second.assembly ) ;
+            }
+        } else {
+            fprintf( out, "<%d%c:%c%s,%c>, ",
+                    i->first,  "wes"[i->second.strength], 
+                    i->second.consensus, i->second.strength == effective ? foo : "",
+                    i->second.assembly ) ;
+        }
     }
     if(t) putc( t, out ) ;
 }
@@ -364,6 +372,7 @@ int main( int argc, char * const argv[] )
 	bool transversions = false ;
     bool be_clever = true ;
     bool mktable = false ;
+    bool really = false ;
 	int min_diag_posns = 1 ;
 	int verbose = 0 ;
 	int maxd = 0 ;
@@ -373,7 +382,7 @@ int main( int argc, char * const argv[] )
 
 	int opt ;
 	do {
-		opt = getopt_long( argc, argv, "r:avhts:d:n:MfT", longopts, 0 ) ;
+		opt = getopt_long( argc, argv, "r:avhts:d:n:MfTF", longopts, 0 ) ;
 		switch( opt ) 
 		{
 			case 'r': 
@@ -414,6 +423,9 @@ int main( int argc, char * const argv[] )
                 break ;
             case 'T':
                 mktable = true ;
+                break ;
+            case 'F':
+                really = true;
                 break ;
 		}
 	} while( opt != -1 ) ;
@@ -468,10 +480,10 @@ int main( int argc, char * const argv[] )
         unsigned d = myers_diff( hum_ref.seq, myers_align_globally, maln->ref->seq, maxd, aln_con, aln_ass ) ;
 
         if( d == UINT_MAX ) {
-            fprintf( stderr, " *** Could not align references with up to %d mismatches.\n"
+            fprintf( stderr, "\n *** Could not align references with up to %d mismatches.\n"
                              " *** This is usually a sign of trouble, but\n"
                              " *** IF AND ONLY IF YOU KNOW WHAT YOU ARE DOING, you can\n"
-                             " *** try the -d N option with N > %d.\n", maxd, maxd ) ;
+                             " *** try the -d N option with N > %d.\n\n", maxd, maxd ) ;
             return 1 ;
         }
         if( mktable ) printf( "%d\t", d ) ;
@@ -494,7 +506,19 @@ int main( int argc, char * const argv[] )
             printf( ", %d of which are strongly diagnostic.\n", num_strong ) ;
         }
 
-        if( verbose >= 3 ) print_dp_list( stderr, l.begin(), l.end(), '\n' ) ;
+        if( verbose >= 3 ) {
+            print_dp_list( stderr, l.begin(), l.end(), '\n', 0 ) ;
+            print_dp_list( stderr, l.begin(), l.end(), '\n', 1 ) ;
+        }
+
+        if( num_strong < 40 && !really ) {
+            fprintf( stderr, "\n *** Low number (%d) of diagnostic positions found.\n"
+                             " *** I will stop now for your own safety.\n"
+                             " *** If you are sure you want to shoot yourself\n"
+                             " *** in the foot, read the man page to learn\n"
+                             " *** how to lift this restriction.\n\n", num_strong ) ;
+            return 1 ;
+        }
 
         typedef std::map< std::string, std::pair< whatsit, int > > Bfrags ;
         Bfrags bfrags, bfrags2 ;
